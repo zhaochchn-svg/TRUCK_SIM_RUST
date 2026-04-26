@@ -44,6 +44,12 @@ cargo build --release
 2. Update `src/main.rs` if JSON protocol changes.
 3. Update `app/composables/RouteController.ts` for frontend handling.
 
+## Verification Preference
+
+- Default to fast syntax/type validation after edits.
+- Do not wait for a full frontend production build after every change unless the user explicitly asks for it or a syntax/type check is not enough to validate the edit.
+- For this repo, `npx tsc -p tsconfig.json --noEmit` is the preferred quick validation step for frontend changes.
+
 ## Units And Telemetry Invariants
 
 - Keep internal route, navigation, and telemetry calculations in the units reported by the game/SDK or in one explicit canonical unit chosen by the module. Do not infer units from the UI language.

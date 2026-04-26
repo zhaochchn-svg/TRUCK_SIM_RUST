@@ -78,6 +78,7 @@ const { loadLocationData, findDestinationCoords } = useCityData();
 
 // 平台检查
 const { isElectron, isMobile, isWeb } = usePlatform();
+const { announceOverSpeed } = useVoiceNavigation();
 
 // 路网系统
 const { loading, progress, adjacency, nodeCoords, initializeGraphData } =
@@ -119,6 +120,8 @@ const {
 
 let uiTimer: ReturnType<typeof setTimeout> | null = null;
 let routeTimer: ReturnType<typeof setTimeout> | null = null;
+const mockTruckCoords = ref<[number, number] | null>(null);
+const mockTruckHeading = ref(0);
 
 // 在挂载前强制显示加载页，防止闪烁
 loading.value = true;
@@ -131,6 +134,63 @@ const isTruckSpawned = computed(() => {
         (truckCoords.value[0] !== 0 || truckCoords.value[1] !== 0)
     );
 });
+
+const activeTruckCoords = computed<[number, number] | null>(() => {
+    if (gameConnected.value) {
+        return isTruckSpawned.value ? truckCoords.value : null;
+    }
+
+    return mockTruckCoords.value;
+});
+
+const activeTruckHeading = computed(() =>
+    gameConnected.value ? truckHeading.value : mockTruckHeading.value,
+);
+
+const activeRouteScale = computed(() =>
+    scale.value > 0 ? scale.value : settings.value.selectedGame === "ats" ? 20 : 19,
+);
+
+const activeAverageSpeed = computed(() =>
+    gameConnected.value ? averageSpeed.value : 80,
+);
+const isOverSpeed = computed(
+    () => speedLimit.value > 0 && truckSpeed.value > speedLimit.value + 2,
+);
+const showOverSpeedWarning = computed(
+    () => gameConnected.value && isOverSpeed.value,
+);
+let overSpeedSince = 0;
+let lastOverSpeedVoiceAt = 0;
+
+function syncMockTruckFromMap(force: boolean = false) {
+    if (gameConnected.value || !map.value) return;
+    if (isRouteActive.value && !force) return;
+
+    const center = map.value.getCenter();
+    const nextCoords: [number, number] = [center.lng, center.lat];
+    const nextHeading = ((map.value.getBearing() % 360) + 360) % 360;
+
+    mockTruckCoords.value = nextCoords;
+    mockTruckHeading.value = nextHeading;
+    followTruck(nextCoords, nextHeading);
+}
+
+watch(
+    [gameConnected, loading],
+    ([isConnected, isLoading]) => {
+        if (isConnected) {
+            mockTruckCoords.value = null;
+            mockTruckHeading.value = 0;
+            return;
+        }
+
+        if (!isLoading && map.value) {
+            syncMockTruckFromMap(true);
+        }
+    },
+    { immediate: true },
+);
 
 /**
  * 监听游戏任务变化: 自动同步游戏内的导航路线
@@ -177,9 +237,9 @@ watch(
                     destCoords,
                     truckCoords.value,
                     truckHeading.value,
-                    scale.value,
+                    activeRouteScale.value,
                     false,
-                    averageSpeed.value,
+                    activeAverageSpeed.value,
                 );
             }
         } else if (!hasJob && currentJobKey.value !== "") {
@@ -224,9 +284,9 @@ watch(
                 destination,
                 currentCoords,
                 truckHeading.value,
-                scale.value,
+                activeRouteScale.value,
                 true,
-                averageSpeed.value,
+                activeAverageSpeed.value,
             );
         }
     },
@@ -272,22 +332,31 @@ onMounted(async () => {
             // 3. 设置地图图层与事件监听
             setupRouteLayer();
             initCameraListeners();
+            syncMockTruckFromMap(true);
+        });
+
+        map.value.on("moveend", () => {
+            syncMockTruckFromMap();
         });
 
         // 处理地图点击: 手动设置目的地
         map.value.on("click", async (e) => {
             const features = map.value!.queryRenderedFeatures(e.point, { layers: ["destination-layer"] });
-            if (features.length > 0 || !settings.value.isClickingEnabled || !truckCoords.value) return;
-
-            const currentScale = scale.value > 0 ? scale.value : (settings.value.selectedGame === "ats" ? 20 : 19);
+            if (
+                features.length > 0 ||
+                !settings.value.isClickingEnabled ||
+                !activeTruckCoords.value
+            ) {
+                return;
+            }
 
             await handleRouteClick(
                 [e.lngLat.lng, e.lngLat.lat],
-                truckCoords.value,
-                truckHeading.value,
-                currentScale,
+                activeTruckCoords.value,
+                activeTruckHeading.value,
+                activeRouteScale.value,
                 true,
-                averageSpeed.value,
+                activeAverageSpeed.value,
             );
 
             if (isRouteActive.value) disableClicking();
@@ -315,7 +384,14 @@ onUnmounted(() => {
  * 每一帧遥感数据更新时的逻辑
  */
 function onTelemetryUpdate() {
-    if (!truckCoords.value || !map.value) return;
+    if (
+        !map.value ||
+        !gameConnected.value ||
+        !isTruckSpawned.value ||
+        !truckCoords.value
+    ) {
+        return;
+    }
 
     // 相机跟随卡车
     followTruck(truckCoords.value, truckHeading.value);
@@ -329,14 +405,26 @@ function onTelemetryUpdate() {
             averageSpeed.value,
         );
     }
+
+    const now = Date.now();
+    if (showOverSpeedWarning.value) {
+        if (overSpeedSince === 0) overSpeedSince = now;
+        const sustainedForMs = now - overSpeedSince;
+        if (sustainedForMs >= 2500 && now - lastOverSpeedVoiceAt >= 18000) {
+            announceOverSpeed();
+            lastOverSpeedVoiceAt = now;
+        }
+    } else {
+        overSpeedSince = 0;
+    }
 }
 
 /**
  * 开始导航模式 (UI 切换)
  */
 function onStartNavigation() {
-    if (!truckCoords.value) return;
-    startNavigationMode(truckCoords.value, truckHeading.value);
+    if (!activeTruckCoords.value) return;
+    startNavigationMode(activeTruckCoords.value, activeTruckHeading.value);
     isSheetHidden.value = true;
 }
 
@@ -354,14 +442,41 @@ const onResetNorth = () => {
 };
 
 const onZoomIn = () => {
-    if (!map.value) return;
-    map.value.easeTo({ zoom: map.value.getZoom() + 1, duration: 250 });
+    if (!canUseZoomControls()) return;
+    map.value!.zoomIn({ duration: 250 });
 };
 
 const onZoomOut = () => {
-    if (!map.value) return;
-    map.value.easeTo({ zoom: map.value.getZoom() - 1, duration: 250 });
+    if (!canUseZoomControls()) return;
+    map.value!.zoomOut({ duration: 250 });
 };
+
+const canUseZoomControls = () => {
+    if (!map.value) return false;
+
+    const hasZoomInteraction =
+        map.value.scrollZoom.isEnabled() ||
+        map.value.touchZoomRotate.isEnabled() ||
+        map.value.doubleClickZoom.isEnabled();
+
+    if (!hasZoomInteraction) return false;
+
+    const zoom = map.value.getZoom();
+    const minZoom = map.value.getMinZoom();
+    const maxZoom = map.value.getMaxZoom();
+
+    return zoom >= minZoom && zoom <= maxZoom;
+};
+
+const canZoomIn = computed(() => {
+    if (!map.value || !canUseZoomControls()) return false;
+    return map.value.getZoom() < map.value.getMaxZoom() - 0.001;
+});
+
+const canZoomOut = computed(() => {
+    if (!map.value || !canUseZoomControls()) return false;
+    return map.value.getZoom() > map.value.getMinZoom() + 0.001;
+});
 
 const onToggleFullscreen = async () => {
     const target = document.documentElement;
@@ -384,6 +499,7 @@ const onToggleFullscreen = async () => {
 const onCancelRoute = () => {
     clearRouteState();
     stopNavigationMode();
+    syncMockTruckFromMap(true);
 };
 
 const toggleSettingsPanel = () => {
@@ -427,6 +543,11 @@ const toggleSettingsPanel = () => {
                         <HudButton :onClick="toggleSettingsPanel">
                             <Icon name="lucide:settings" class="icon" />
                         </HudButton>
+                    </div>
+
+                    <div v-if="!gameConnected" class="offline-badge">
+                        <Icon name="lucide:plug-zap-off" class="offline-badge-icon" />
+                        <span>Game Offline</span>
                     </div>
 
                     <!-- 导航步骤卡片 -->
@@ -473,11 +594,11 @@ const toggleSettingsPanel = () => {
                             <Icon v-else name="lucide:locate" class="icon" />
                         </HudButton>
 
-                        <HudButton :onClick="onZoomIn">
+                        <HudButton :onClick="onZoomIn" :disabled="!canZoomIn">
                             <Icon name="lucide:plus" class="icon" />
                         </HudButton>
 
-                        <HudButton :onClick="onZoomOut">
+                        <HudButton :onClick="onZoomOut" :disabled="!canZoomOut">
                             <Icon name="lucide:minus" class="icon" />
                         </HudButton>
 
@@ -501,14 +622,14 @@ const toggleSettingsPanel = () => {
                     <!-- 警告提示 -->
                     <div class="warnings">
                         <WarningSlide
+                            :show-if="showOverSpeedWarning"
+                            :reset-on="!showOverSpeedWarning"
+                            text="您已超速，请注意减速"
+                        />
+                        <WarningSlide
                             :show-if="hasInGameMarker && !isRouteActive"
                             :reset-on="isRouteActive"
                             text="检测到外部路线: 设置导航点"
-                        />
-                        <WarningSlide
-                            :show-if="!gameConnected"
-                            :reset-on="gameConnected"
-                            text="游戏未连接"
                         />
                     </div>
 

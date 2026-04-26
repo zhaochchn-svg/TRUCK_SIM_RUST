@@ -25,7 +25,7 @@ export const useRouteController = (
     stopNavigationMode: () => void,
 ) => {
     const { getGameLocationName } = useCityData();
-    const { getClosestNodes } = useGraphSystem();
+    const { getClosestNodes, getClosestDestinationNodes } = useGraphSystem();
     const { settings, activeSettings, updateProfile } = useSettings();
     const { processNavigationUpdate, resetVoiceState, announceStart, announceReroute } = useVoiceNavigation();
     const { sendWsMessage } = useEtsTelemetry();
@@ -383,13 +383,33 @@ export const useRouteController = (
     }
 
     async function findFlexibleRoute(startNodeId: number, targetCoords: [number, number], truckHeading: number, ownedDlcs: number[]) {
-        const SEARCH_RADII = [1, 2, 4, 8, 16, 32, 100, 300];
-        for (const radius of SEARCH_RADII) {
-            const candidates = getClosestNodes(targetCoords, radius, 0.1);
+        const snappedCandidates = getClosestDestinationNodes(
+            targetCoords,
+            truckHeading,
+            24,
+        );
+        const candidateCounts = [2, 4, 8, 12, 16, 24];
+
+        for (const count of candidateCounts) {
+            const candidates = snappedCandidates.slice(0, count);
             if (candidates.length === 0) continue;
             const result = await calculateRouteInRust(startNodeId, candidates, truckHeading, ownedDlcs);
             if (result) return result;
         }
+
+        const fallbackCandidateCounts = [1, 2, 4, 8, 16, 32, 100, 300];
+        for (const count of fallbackCandidateCounts) {
+            const candidates = getClosestNodes(targetCoords, count, 0.1);
+            if (candidates.length === 0) continue;
+            const result = await calculateRouteInRust(
+                startNodeId,
+                candidates,
+                truckHeading,
+                ownedDlcs,
+            );
+            if (result) return result;
+        }
+
         return null;
     }
 

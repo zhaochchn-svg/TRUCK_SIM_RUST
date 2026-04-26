@@ -208,7 +208,6 @@ async fn handle_connection(
                             Ok(req) => {
                                 match req {
                                     WsRequest::CalcRoute(payload) => {
-                                        info!("计算路由: {} 节点, 游戏: {}", payload.possible_ends.len(), payload.selected_game);
                                         let result = if let Some(engine) = engines.get(&payload.selected_game) {
                                             engine.calculate_route(
                                                 payload.start_id,

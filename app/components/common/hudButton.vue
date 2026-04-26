@@ -1,14 +1,17 @@
 <script lang="ts" setup>
 defineProps<{
     onClick: () => void;
-    // iconName: string;
-    // activeIconName?: string;
     isActive?: boolean;
+    disabled?: boolean;
 }>();
 </script>
 
 <template>
-    <button class="option-btn" @click.prevent.stop="onClick">
+    <button
+        class="option-btn"
+        :disabled="disabled"
+        @click.prevent.stop="!disabled && onClick()"
+    >
         <slot />
     </button>
 </template>

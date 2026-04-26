@@ -2,6 +2,20 @@ import { ref, watch } from 'vue';
 
 type VoiceState = "idle" | "speaking";
 type AnnouncementThreshold = "2km" | "1km" | "500m" | "action";
+type VoicePriority = 0 | 1 | 2 | 3;
+
+interface SpeakOptions {
+    priority?: VoicePriority;
+    interrupt?: boolean;
+    dedupeKey?: string;
+    dedupeWindowMs?: number;
+    queueGroup?: string;
+}
+
+interface QueuedSpeech {
+    text: string;
+    options: Required<SpeakOptions>;
+}
 
 export function useVoiceNavigation() {
     const { activeSettings } = useSettings();
@@ -9,8 +23,13 @@ export function useVoiceNavigation() {
     const voiceState = ref<VoiceState>("idle");
     const lastAnnouncedManeuverId = ref<number>(-1);
     const lastAnnouncedThreshold = ref<AnnouncementThreshold | null>(null);
+    const queuedSpeech = ref<QueuedSpeech | null>(null);
 
     const availableVoices = ref<SpeechSynthesisVoice[]>([]);
+    const recentSpeechTimes = new Map<string, number>();
+    let activeSpeechToken = 0;
+    let currentSpeechKey: string | null = null;
+    let currentSpeechPriority: VoicePriority = 0;
 
     // Load voices
     const loadVoices = () => {
@@ -152,9 +171,15 @@ export function useVoiceNavigation() {
         return text;
     };
 
-    const speak = (text: string) => {
+    const playSpeech = (speech: QueuedSpeech) => {
         if (!synth || !activeSettings.value.voiceNavigationEnabled) return;
-        if (synth.speaking) synth.cancel(); // Interrupt current speech
+        const { text, options } = speech;
+        const dedupeKey = options.dedupeKey;
+
+        activeSpeechToken += 1;
+        const speechToken = activeSpeechToken;
+        currentSpeechKey = dedupeKey;
+        currentSpeechPriority = options.priority;
 
         const utterance = new SpeechSynthesisUtterance(text);
         const voice = getSelectedVoice();
@@ -164,14 +189,89 @@ export function useVoiceNavigation() {
         utterance.rate = 1.05;
 
         utterance.onstart = () => { voiceState.value = "speaking"; };
-        utterance.onend = () => { voiceState.value = "idle"; };
-        utterance.onerror = () => { voiceState.value = "idle"; };
+        utterance.onend = () => {
+            if (speechToken !== activeSpeechToken) return;
+            voiceState.value = "idle";
+            recentSpeechTimes.set(dedupeKey, Date.now());
+            currentSpeechKey = null;
+            currentSpeechPriority = 0;
+
+            const nextSpeech = queuedSpeech.value;
+            queuedSpeech.value = null;
+            if (nextSpeech) {
+                playSpeech(nextSpeech);
+            }
+        };
+        utterance.onerror = () => {
+            if (speechToken !== activeSpeechToken) return;
+            voiceState.value = "idle";
+            currentSpeechKey = null;
+            currentSpeechPriority = 0;
+            queuedSpeech.value = null;
+        };
 
         try {
             synth.speak(utterance);
         } catch (e) {
             console.warn("Speech synthesis failed:", e);
         }
+    };
+
+    const speak = (text: string, options: SpeakOptions = {}) => {
+        if (!synth || !activeSettings.value.voiceNavigationEnabled) return;
+
+        const normalizedOptions: Required<SpeakOptions> = {
+            priority: options.priority ?? 1,
+            interrupt: options.interrupt ?? false,
+            dedupeKey: options.dedupeKey ?? text,
+            dedupeWindowMs: options.dedupeWindowMs ?? 4500,
+            queueGroup: options.queueGroup ?? options.dedupeKey ?? text,
+        };
+
+        const now = Date.now();
+        const lastSpokenAt = recentSpeechTimes.get(normalizedOptions.dedupeKey);
+        if (
+            lastSpokenAt !== undefined &&
+            now - lastSpokenAt < normalizedOptions.dedupeWindowMs
+        ) {
+            return;
+        }
+
+        if (currentSpeechKey === normalizedOptions.dedupeKey) return;
+        if (
+            queuedSpeech.value &&
+            queuedSpeech.value.options.dedupeKey === normalizedOptions.dedupeKey
+        ) {
+            return;
+        }
+
+        const speech: QueuedSpeech = { text, options: normalizedOptions };
+
+        if (voiceState.value === "speaking" || synth.speaking) {
+            if (
+                normalizedOptions.interrupt &&
+                normalizedOptions.priority > currentSpeechPriority
+            ) {
+                queuedSpeech.value = null;
+                try {
+                    synth.cancel();
+                } catch (e) {}
+                playSpeech(speech);
+                return;
+            }
+
+            if (
+                !queuedSpeech.value ||
+                queuedSpeech.value.options.queueGroup ===
+                    normalizedOptions.queueGroup ||
+                normalizedOptions.priority >= queuedSpeech.value.options.priority
+            ) {
+                queuedSpeech.value = speech;
+            }
+            return;
+        }
+
+        playSpeech(speech);
     };
 
     const resetVoiceState = () => {
@@ -182,6 +282,9 @@ export function useVoiceNavigation() {
                 synth.cancel();
             } catch (e) {}
         }
+        queuedSpeech.value = null;
+        currentSpeechKey = null;
+        currentSpeechPriority = 0;
     };
 
     const processNavigationUpdate = (
@@ -202,23 +305,44 @@ export function useVoiceNavigation() {
 
         // Gaode Style Thresholds
         if (distanceToTurnKm <= 0.05 && lastAnnouncedThreshold.value !== "action") { // ~50 meters: Action time
-            speak(transformInstruction(instructionText, isDestination ? "arrive" : "action"));
+            speak(transformInstruction(instructionText, isDestination ? "arrive" : "action"), {
+                priority: 3,
+                interrupt: true,
+                dedupeKey: `maneuver:${maneuverId}:action`,
+                dedupeWindowMs: 6000,
+                queueGroup: `maneuver:${maneuverId}`,
+            });
             lastAnnouncedThreshold.value = "action";
         } 
         else if (distanceToTurnKm <= 0.5 && distanceToTurnKm > 0.05 && lastAnnouncedThreshold.value !== "500m" && lastAnnouncedThreshold.value !== "action") {
             if (mode === "standard") {
                 const distStr = Math.round(distanceToTurnKm * 1000) + "米";
-                speak(transformInstruction(`前方 ${distStr} ${instructionText}`, "prep"));
+                speak(transformInstruction(`前方 ${distStr} ${instructionText}`, "prep"), {
+                    priority: 2,
+                    dedupeKey: `maneuver:${maneuverId}:500m`,
+                    dedupeWindowMs: 8000,
+                    queueGroup: `maneuver:${maneuverId}`,
+                });
                 lastAnnouncedThreshold.value = "500m";
             }
         }
         else if (distanceToTurnKm <= 1.0 && distanceToTurnKm > 0.5 && lastAnnouncedThreshold.value !== "1km" && lastAnnouncedThreshold.value !== "500m" && lastAnnouncedThreshold.value !== "action") {
-            speak(transformInstruction(`前方一公里 ${instructionText}`, "prep"));
+            speak(transformInstruction(`前方一公里 ${instructionText}`, "prep"), {
+                priority: 1,
+                dedupeKey: `maneuver:${maneuverId}:1km`,
+                dedupeWindowMs: 12000,
+                queueGroup: `maneuver:${maneuverId}`,
+            });
             lastAnnouncedThreshold.value = "1km";
         }
         else if (distanceToTurnKm <= 2.0 && distanceToTurnKm > 1.0 && lastAnnouncedThreshold.value !== "2km" && lastAnnouncedThreshold.value !== "1km" && lastAnnouncedThreshold.value !== "500m" && lastAnnouncedThreshold.value !== "action") {
             if (mode === "standard") {
-                speak(transformInstruction(`前方两公里 ${instructionText}`, "prep"));
+                speak(transformInstruction(`前方两公里 ${instructionText}`, "prep"), {
+                    priority: 1,
+                    dedupeKey: `maneuver:${maneuverId}:2km`,
+                    dedupeWindowMs: 15000,
+                    queueGroup: `maneuver:${maneuverId}`,
+                });
                 lastAnnouncedThreshold.value = "2km";
             }
         }
@@ -226,7 +350,12 @@ export function useVoiceNavigation() {
 
     const announceStart = () => {
         if (activeSettings.value.voiceNavigationEnabled) {
-            speak(transformInstruction("", "start"));
+            speak(transformInstruction("", "start"), {
+                priority: 2,
+                dedupeKey: "navigation:start",
+                dedupeWindowMs: 5000,
+                queueGroup: "navigation-lifecycle",
+            });
         }
     };
 
@@ -253,7 +382,23 @@ export function useVoiceNavigation() {
             text = "唔哇，走错路啦！别急别急，莉莉马上给你找条新路！";
         }
         
-        speak(text);
+        speak(text, {
+            priority: 3,
+            interrupt: true,
+            dedupeKey: "navigation:reroute",
+            dedupeWindowMs: 8000,
+            queueGroup: "navigation-lifecycle",
+        });
+    };
+
+    const announceOverSpeed = () => {
+        if (!activeSettings.value.voiceNavigationEnabled) return;
+        speak("您已超速，请注意减速。", {
+            priority: 2,
+            dedupeKey: "warning:overspeed",
+            dedupeWindowMs: 18000,
+            queueGroup: "safety",
+        });
     };
 
     return {
@@ -261,6 +406,7 @@ export function useVoiceNavigation() {
         resetVoiceState,
         announceStart,
         announceReroute,
+        announceOverSpeed,
         availableVoices,
         speak
     };
