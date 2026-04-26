@@ -43,3 +43,12 @@ cargo build --release
 1. Modify `src/routing.rs` for algorithm logic.
 2. Update `src/main.rs` if JSON protocol changes.
 3. Update `app/composables/RouteController.ts` for frontend handling.
+
+## Units And Telemetry Invariants
+
+- Keep internal route, navigation, and telemetry calculations in the units reported by the game/SDK or in one explicit canonical unit chosen by the module. Do not infer units from the UI language.
+- Read unit-related settings from the game telemetry/settings when they affect calculation semantics. Display components may convert to user-facing fixed units, but calculation inputs must not be pre-converted for presentation.
+- Treat speed, distance, and time as separate quantities. Do not reuse distance conversion helpers for speed, and do not derive ETA from already-rounded display distance.
+- For route summaries, calculate remaining distance/time from raw route progress and raw speed values, then convert only at the final display boundary.
+- When adding new HUD or sheet values, name variables with their canonical unit suffix where practical, such as `speedKph`, `distanceKm`, `durationHours`, or `distanceMeters`.
+- Road graph edge weights in `graph.bin` are meters. The Rust `RouteResult.node_kms` WebSocket field must be converted to kilometers before it leaves the backend, because frontend route summaries and maneuver distances treat it as kilometers.

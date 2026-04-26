@@ -1,6 +1,4 @@
 <script setup lang="ts">
-import { KeepAwake } from "@capacitor-community/keep-awake";
-
 const { requestWakeLock } = useWakeLock();
 
 onMounted(async () => {
@@ -8,12 +6,6 @@ onMounted(async () => {
     initSettings();
 
     if (import.meta.client) {
-        // Native App Keep Awake (Capacitor)
-        const result = await KeepAwake.isSupported();
-        if (result.isSupported) {
-            await KeepAwake.keepAwake();
-        }
-
         // Web Browser Wake Lock (iOS/Chrome)
         // We REMOVE the immediate requestWakeLock() call here because it causes the error
         // 'play() failed because the user didn't interact with the document first'.

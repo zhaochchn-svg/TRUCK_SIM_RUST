@@ -3,11 +3,14 @@
     align-items: center;
     position: absolute;
     top: -65px;
-    right: -2px;
-    padding: 4px 12px 4px 12px;
+    right: 0;
+    box-sizing: border-box;
+    width: clamp(250px, 72vw, 340px);
+    min-height: 44px;
+    padding: 4px 10px 4px 12px;
 
-    display: flex;
-    gap: 1.4rem;
+    justify-content: space-between;
+    gap: 0.9rem;
 
     font-size: var(--compact-trip-size);
     color: $white-font-text;
@@ -21,13 +24,23 @@
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 
     .icon-btn {
-        flex: 1;
+        flex: 0 0 auto;
         height: fit-content;
         padding: 0;
     }
 
+    .right {
+        min-width: 0;
+        flex: 1;
+        text-align: left;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
     &.preview {
         position: static;
+        width: 100%;
         margin: 0;
     }
 }

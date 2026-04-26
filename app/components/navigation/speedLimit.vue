@@ -4,11 +4,11 @@ const props = defineProps<{
     speedLimit: number;
 }>();
 
-const { kmToUserUnits } = useUnitConversion();
+const { speedToUserUnits, speedUnit } = useUnitConversion();
 const { settings } = useSettings();
 
-const truckSpeedConverted = computed(() => kmToUserUnits(props.truckSpeed));
-const speedLimitConverted = computed(() => kmToUserUnits(props.speedLimit));
+const truckSpeedConverted = computed(() => speedToUserUnits(props.truckSpeed));
+const speedLimitConverted = computed(() => speedToUserUnits(props.speedLimit));
 
 const isOverSpeed = computed(() => {
     return props.speedLimit > 0 && props.truckSpeed > props.speedLimit + 2;
@@ -35,7 +35,7 @@ const isOverSpeed = computed(() => {
         <!-- Current Speed Bubble (Right) -->
         <div class="current-speed-bubble" :class="{ 'over-limit': isOverSpeed }">
             <span class="speed-num">{{ truckSpeedConverted }}</span>
-            <span class="speed-unit">km/h</span>
+            <span class="speed-unit">{{ speedUnit }}</span>
         </div>
     </div>
 </template>

@@ -1,12 +1,18 @@
-import { Capacitor } from "@capacitor/core";
-
 export const usePlatform = () => {
     const isElectron = ref(false);
     const isMobile = ref(false);
     const isWeb = ref(false);
 
     if (typeof window !== "undefined") {
-        const platform = Capacitor.getPlatform();
+        const userAgent = window.navigator.userAgent.toLowerCase();
+        const electronAPI = (window as any).electronAPI;
+        const platform = electronAPI
+            ? "electron"
+            : /android/.test(userAgent)
+              ? "android"
+              : /iphone|ipad|ipod/.test(userAgent)
+                ? "ios"
+                : "web";
 
         if (platform === "web") isWeb.value = true;
         if (platform === "electron") isElectron.value = true;

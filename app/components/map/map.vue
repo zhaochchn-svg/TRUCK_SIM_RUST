@@ -1,30 +1,40 @@
 <script lang="ts" setup>
+/**
+ * 地图主组件
+ * 负责地图初始化、遥感数据订阅、UI 图层叠加以及自动寻路逻辑
+ */
 import { ref, onMounted, shallowRef, Transition } from "vue";
 import "maplibre-gl/dist/maplibre-gl.css";
 import maplibregl from "maplibre-gl";
 import { usePlatform } from "~/composables/Platform";
-import eruda from "eruda";
 import { blendWithBg, lightenColor } from "~/assets/utils/shared/colors";
 import { generateTruckIcon } from "~/assets/utils/map/markers";
 
 defineProps<{ goHome: () => void }>();
 
-// NOTIFICATION TRIGGERS
+// 交互反馈触发器
 const clickingNotificationTrigger = ref(0);
 
-//
-//
-//// ======> COMPOSABLES <======
+// ======> COMPOSABLES <======
 
-// Settings Controller
+// 配置管理
 const { activeSettings, settings, updateGlobal } = useSettings();
 
-// MAP STATE
+// 地图实例与状态
 const mapEl = shallowRef<HTMLElement | null>(null);
 const map = shallowRef<maplibregl.Map | null>(null);
 const isSettingsPanelOpened = ref(false);
 
+// 点击设置目的地使能状态
 const isClickingEnabled = ref(settings.value.isClickingEnabled);
+
+const disableClicking = () => {
+    if (isClickingEnabled.value) {
+        isClickingEnabled.value = false;
+    } else if (settings.value.isClickingEnabled) {
+        updateGlobal("isClickingEnabled", false);
+    }
+};
 
 watch(isClickingEnabled, (val) => {
     if (settings.value.isClickingEnabled !== val) {
@@ -36,13 +46,13 @@ watch(() => settings.value.isClickingEnabled, (val) => {
     isClickingEnabled.value = val;
 });
 
-// UI STATE
+// UI 面板状态
 const isSheetHidden = ref(false);
 
-// JOB STATE
+// 任务同步 Key (用于判断任务是否发生变更)
 const currentJobKey = ref<string>("");
 
-// Telemetry Data
+// 订阅遥感数据
 const {
     startTelemetry,
     stopTelemetry,
@@ -63,25 +73,17 @@ const {
     destinationCompany,
 } = useEtsTelemetry();
 
-//
-//
-// Map Areas Data
+// 城市与位置数据加载器
 const { loadLocationData, findDestinationCoords } = useCityData();
 
-//
-//
-// Check Platform
+// 平台检查
 const { isElectron, isMobile, isWeb } = usePlatform();
 
-//
-//
-// Graph manipulation
+// 路网系统
 const { loading, progress, adjacency, nodeCoords, initializeGraphData } =
     useGraphSystem();
 
-//
-//
-// Maplibre Camera
+// 地图相机与标记管理
 const {
     isCameraLocked,
     isAutoFollowEnabled,
@@ -96,9 +98,7 @@ const {
     toggleAutoFollow,
 } = useMapCamera(map);
 
-//
-//
-// Route Controller
+// 路由逻辑控制
 const {
     setupRouteLayer,
     handleRouteClick,
@@ -117,17 +117,14 @@ const {
     nextTurnDistance,
 } = useRouteController(map, adjacency, nodeCoords, stopNavigationMode);
 
-//
-//
-// Settings Controller
-
 let uiTimer: ReturnType<typeof setTimeout> | null = null;
 let routeTimer: ReturnType<typeof setTimeout> | null = null;
 
-// Forcing loading screen before mounting elements to prevent flashing between game changes
+// 在挂载前强制显示加载页，防止闪烁
 loading.value = true;
 progress.value = 0;
 
+// 判断卡车是否已在地图上生成 (非 0,0 坐标)
 const isTruckSpawned = computed(() => {
     return (
         truckCoords.value &&
@@ -135,7 +132,9 @@ const isTruckSpawned = computed(() => {
     );
 });
 
-// We check if it has active job, if it has one, plot a route
+/**
+ * 监听游戏任务变化: 自动同步游戏内的导航路线
+ */
 watch(
     [
         hasActiveJob,
@@ -152,28 +151,27 @@ watch(
         company,
         isConnected,
         isLoading,
-        isWorkerReady,
+        isReady,
         truckReady,
     ]) => {
         if (!truckCoords.value) return;
-        if (isLoading || !isWorkerReady || !isConnected || !truckReady) {
+        // 必须等待后端连接和路网数据加载完成
+        if (isLoading || !isReady || !isConnected || !truckReady) {
             currentJobKey.value = "";
             return;
         }
 
         const newJobKey = hasJob ? `${city}|${company}` : "";
-
         if (hasJob && newJobKey === currentJobKey.value) return;
 
         if (routeTimer) clearTimeout(routeTimer);
 
         if (hasJob && newJobKey !== currentJobKey.value) {
             const destCoords = findDestinationCoords(city, company);
-
             if (destCoords) {
                 currentJobKey.value = newJobKey;
                 clearRouteState();
-                isClickingEnabled.value = false;
+                disableClicking();
 
                 await handleRouteClick(
                     destCoords,
@@ -185,6 +183,7 @@ watch(
                 );
             }
         } else if (!hasJob && currentJobKey.value !== "") {
+            // 任务结束，清理路径
             clearRouteState();
             stopNavigationMode();
             currentJobKey.value = "";
@@ -192,22 +191,35 @@ watch(
     },
 );
 
+// 标记是否已经执行过刷新后的自动恢复
+const hasAutoRecovered = ref(false);
+
+/**
+ * 监听路由计算结果，延迟自动重置状态以隐藏 UI 图标
+ */
+watch(routeFound, (newVal) => {
+    if (newVal !== null) {
+        if (uiTimer) clearTimeout(uiTimer);
+        uiTimer = setTimeout(() => {
+            routeFound.value = null;
+        }, 2000); // 2秒后重置
+    }
+});
+
+/**
+ * 监听手动设置的目的地: 实现刷新页面后的导航自动恢复
+ */
 watch(
-    [hasActiveJob, gameConnected, loading, isWorkerReady, isTruckSpawned, truckCoords],
-    ([hasJob, isGameConnected, isLoading, isWorkerReady, truckReady, currentCoords]) => {
-        if (!currentCoords) return;
-        if (
-            isLoading ||
-            !isWorkerReady ||
-            !isGameConnected ||
-            hasJob ||
-            !truckReady
-        )
-            return;
+    [gameConnected, loading, isWorkerReady, isTruckSpawned, truckCoords],
+    ([isGameConnected, isLoading, isReady, truckReady, currentCoords]) => {
+        // 如果已经恢复过，或者条件不满足，则跳过
+        if (hasAutoRecovered.value || isLoading || !isReady || !isGameConnected || !truckReady || !currentCoords) return;
 
         const destination = activeSettings.value.lastDestination;
-
         if (destination && !isRouteActive.value && !isCalculatingRoute.value) {
+            console.log("[Map] 正在自动恢复上次的导航路线...");
+            hasAutoRecovered.value = true; // 确保只触发一次
+            disableClicking();
             handleRouteClick(
                 destination,
                 currentCoords,
@@ -221,149 +233,53 @@ watch(
     { immediate: true }
 );
 
-// We check each time the theme color changes to udate the map libre appsettings.default theme color
+// 监听主题色变化，更新卡车图标
 watch(
     () => activeSettings.value.themeColor,
     async (newColor) => {
         if (!map.value) return;
-
         const newTruckImg = await generateTruckIcon(newColor);
         updateMarkerImage(newTruckImg.src);
-
-        if (map.value.getLayer("prefab-zones")) {
-            const blended = blendWithBg(lightenColor(newColor, 0.3), 0.6);
-            map.value.setPaintProperty("prefab-zones", "fill-color", blended);
-        }
     },
 );
 
-watch(
-    () => activeSettings.value.mapTheme,
-    (theme) => {
-        if (map.value && theme) {
-            updateMapTheme(map.value, theme);
-        }
-    },
-);
-
-// We check each time the truck marker size changes to update the map libre truck marker elemeent size
-watch(
-    () => settings.value.truckMarkerSize,
-    (newSize) => {
-        if (newSize) {
-            updateMarkerSize(newSize);
-        }
-    },
-);
-
-// We check each time the text font changes to udate to the settings text font
-watch(
-    () => activeSettings.value.fontFamily,
-    (newFont) => {
-        if (!map.value) return;
-
-        const textLayers = [
-            "village-labels",
-            "city-labels",
-            "capital-major-labels",
-            "country-labels",
-        ];
-
-        textLayers.forEach((layerId) => {
-            if (map.value!.getLayer(layerId)) {
-                map.value!.setLayoutProperty(layerId, "text-font", [newFont]);
-            }
-        });
-    },
-);
-
-// We set the routeFound back to null with a delay if its true / false.
-watch(routeFound, (newVal) => {
-    if (newVal !== null) {
-        if (uiTimer) clearTimeout(uiTimer);
-
-        uiTimer = setTimeout(() => {
-            routeFound.value = null;
-        }, 1000);
-    }
-});
-
-// When loaded, checks gameConnected -> show map
-watch([loading, gameConnected], ([isLoading, isGameConnected]) => {
-    if (!isLoading) {
-        setTimeout(() => {
-            isCameraLocked.value = true;
-        }, 100);
-
-        if (isGameConnected) {
-            setTimeout(() => {
-                isCameraLocked.value = true;
-            }, 500);
-        }
-    }
-});
-
-watch(gameConnected, (isConnected) => {
-    if (!map.value) return;
-    if (!isConnected) {
-        isCameraLocked.value = false;
-        clearRouteState();
-    }
-});
-
+/**
+ * 生命周期: 组件挂载
+ */
 onMounted(async () => {
-    // eruda.init(); // KEEP FOR DEBUGGING MOBILE
+    // 加载城市坐标数据
     await loadLocationData();
     if (!mapEl.value) return;
-    if (isElectron.value) {
-        (window as any).electronAPI.setWindowSize(900, 600, true, true);
-    }
 
     try {
+        // 初始化 MapLibre 实例
         const mapInstance = await initializeMap(mapEl.value);
         map.value = markRaw(mapInstance);
         if (!map.value) return;
 
-        const initialTruckImg = await generateTruckIcon(
-            activeSettings.value.themeColor,
-        );
+        const initialTruckImg = await generateTruckIcon(activeSettings.value.themeColor);
+
         map.value.on("load", async () => {
+            // 1. 初始化卡车标记
             initMarker(initialTruckImg.src, settings.value.truckMarkerSize);
+            
+            // 2. 加载路网二进制数据并通知 RouteController
             const graphData = await initializeGraphData();
-            if (!graphData) return;
+            if (graphData) {
+                initWorkerData(); // 标记后端服务就绪
+            }
 
-            initWorkerData(
-                graphData.nodes,
-                graphData.graphBuffer,
-                graphData.geometryBuffer,
-            );
-
+            // 3. 设置地图图层与事件监听
             setupRouteLayer();
             initCameraListeners();
         });
 
+        // 处理地图点击: 手动设置目的地
         map.value.on("click", async (e) => {
-            // Check if we are clicking on an existing destination marker to prevent duplicates
-            const features = map.value!.queryRenderedFeatures(e.point, {
-                layers: ["destination-layer"],
-            });
-            if (features.length > 0) return;
+            const features = map.value!.queryRenderedFeatures(e.point, { layers: ["destination-layer"] });
+            if (features.length > 0 || !settings.value.isClickingEnabled || !truckCoords.value) return;
 
-            // CRITICAL: Directly check settings to avoid closure-stale-value bugs
-            if (!settings.value.isClickingEnabled) return;
-            
-            // Allow clicking even if not connected to show 'calculating' feedback
-            if (!truckCoords.value) {
-                console.warn("Cannot set route: Truck coordinates are missing.");
-                return;
-            }
-
-            const currentScale =
-                scale.value > 0
-                    ? scale.value
-                    : settings.value.selectedGame === "ats"
-                      ? 20
-                      : 19;
+            const currentScale = scale.value > 0 ? scale.value : (settings.value.selectedGame === "ats" ? 20 : 19);
 
             await handleRouteClick(
                 [e.lngLat.lng, e.lngLat.lat],
@@ -373,34 +289,38 @@ onMounted(async () => {
                 true,
                 averageSpeed.value,
             );
+
+            if (isRouteActive.value) disableClicking();
         });
 
-        startTelemetry(() => {
-            onTelemetryUpdate();
-        });
+        // 启动遥感数据循环
+        startTelemetry(() => onTelemetryUpdate());
     } catch (e) {
-        console.error(e);
+        console.error("地图初始化失败:", e);
     }
 });
 
 onUnmounted(() => {
     stopTelemetry();
     destroyWorker();
-
     if (routeTimer) clearTimeout(routeTimer);
     if (uiTimer) clearTimeout(uiTimer);
-
     if (map.value) {
         map.value.remove();
         map.value = null;
     }
 });
 
+/**
+ * 每一帧遥感数据更新时的逻辑
+ */
 function onTelemetryUpdate() {
     if (!truckCoords.value || !map.value) return;
 
+    // 相机跟随卡车
     followTruck(truckCoords.value, truckHeading.value);
 
+    // 如果导航激活，更新导航线进度
     if (isRouteActive.value) {
         updateRouteProgress(
             truckCoords.value,
@@ -411,11 +331,12 @@ function onTelemetryUpdate() {
     }
 }
 
+/**
+ * 开始导航模式 (UI 切换)
+ */
 function onStartNavigation() {
     if (!truckCoords.value) return;
-
     startNavigationMode(truckCoords.value, truckHeading.value);
-
     isSheetHidden.value = true;
 }
 
@@ -425,24 +346,21 @@ function onSheetClosed() {
 
 function toggleEnableClicking() {
     isClickingEnabled.value = !isClickingEnabled.value;
-
     clickingNotificationTrigger.value++;
 }
 
 const onResetNorth = () => {
-    map.value?.easeTo({
-        bearing: 0,
-        pitch: 0,
-        duration: 500,
-    });
+    map.value?.easeTo({ bearing: 0, pitch: 0, duration: 500 });
 };
 
 const onZoomIn = () => {
-    map.value?.zoomIn({ duration: 300 });
+    if (!map.value) return;
+    map.value.easeTo({ zoom: map.value.getZoom() + 1, duration: 250 });
 };
 
 const onZoomOut = () => {
-    map.value?.zoomOut({ duration: 300 });
+    if (!map.value) return;
+    map.value.easeTo({ zoom: map.value.getZoom() - 1, duration: 250 });
 };
 
 const onToggleFullscreen = async () => {
@@ -451,10 +369,8 @@ const onToggleFullscreen = async () => {
     try {
         if (!document.fullscreenElement) {
             await target.requestFullscreen();
-        } else {
-            if (document.exitFullscreen) {
-                await document.exitFullscreen();
-            }
+        } else if (document.exitFullscreen) {
+            await document.exitFullscreen();
         }
 
         setTimeout(() => {
@@ -465,13 +381,13 @@ const onToggleFullscreen = async () => {
     }
 };
 
-const toggleSettingsPanel = () => {
-    isSettingsPanelOpened.value = !isSettingsPanelOpened.value;
-};
-
 const onCancelRoute = () => {
     clearRouteState();
     stopNavigationMode();
+};
+
+const toggleSettingsPanel = () => {
+    isSettingsPanelOpened.value = !isSettingsPanelOpened.value;
 };
 </script>
 
@@ -487,9 +403,11 @@ const onCancelRoute = () => {
             <Transition name="ui-layer-fade">
                 <div v-show="!isSettingsPanelOpened" class="map-ui-layer">
                     <Transition name="fade">
+                        <!-- 加载遮罩 -->
                         <LoadingScreen v-if="loading" :progress="progress" />
                     </Transition>
 
+                    <!-- 顶部状态栏 -->
                     <TopBar
                         v-show="settings.activeUiComponents.includes('topBar')"
                         :fuel="fuel"
@@ -497,10 +415,10 @@ const onCancelRoute = () => {
                         :game-time="gameTime"
                         :rest-stop-minutes="restStopMinutes"
                         :rest-stop-time="restStoptime"
-                        :truck-speed="truckSpeed"
                         :is-web="isWeb"
                     />
 
+                    <!-- 左侧控制按钮 -->
                     <div class="left-buttons">
                         <HudButton :onClick="goHome">
                             <Icon name="lucide:arrow-left" class="icon" />
@@ -511,58 +429,33 @@ const onCancelRoute = () => {
                         </HudButton>
                     </div>
 
+                    <!-- 导航步骤卡片 -->
                     <ManeuverCard
-                        v-show="
-                            isNavigating && activeSettings.hasTurnNavigation
-                        "
+                        v-show="isNavigating && activeSettings.hasTurnNavigation"
                         :upcoming-turns="fullRouteDirections"
                         :distance-to-next-turn="nextTurnDistance"
-                        :next-instruction="
-                            fullRouteDirections[1]?.text || 'Follow Route'
-                        "
+                        :next-instruction="fullRouteDirections[1]?.text || '继续沿路行驶'"
                     />
 
+                    <!-- 通用通知 -->
                     <NotificationGeneral
                         :trigger="clickingNotificationTrigger"
-                        :text="
-                            isClickingEnabled
-                                ? 'Tapping Enabled'
-                                : 'Tapping Disabled'
-                        "
+                        :text="isClickingEnabled ? '已开启地图选点' : '已禁用地图选点'"
                     >
                         <template #icon>
-                            <Icon
-                                v-if="isClickingEnabled"
-                                class="notification-icon"
-                                name="lucide:pointer"
-                                size="24"
-                                :style="{ color: '#4caf50' }"
-                            />
-
-                            <Icon
-                                v-else
-                                class="notification-icon"
-                                name="lucide:pointer-off"
-                                size="24"
-                                :style="{ color: '#dd4a34' }"
-                            />
+                            <Icon v-if="isClickingEnabled" name="lucide:pointer" size="24" color="#4caf50" />
+                            <Icon v-else name="lucide:pointer-off" size="24" color="#dd4a34" />
                         </template>
                     </NotificationGeneral>
 
+                    <!-- 路由计算状态通知 -->
                     <NotificationRoute
                         :is-route-found="routeFound"
                         :is-calculating-route="isCalculatingRoute"
                     />
 
+                    <!-- 右侧 HUD 按钮组 -->
                     <div class="hud-buttons">
-                        <HudButton
-                            v-if="isRouteActive"
-                            class="red-icon"
-                            :onClick="onCancelRoute"
-                        >
-                            <Icon name="lucide:map-pin-off" class="icon" />
-                        </HudButton>
-
                         <HudButton v-if="!isElectron" :onClick="onToggleFullscreen">
                             <Icon name="lucide:fullscreen" class="icon" />
                         </HudButton>
@@ -576,11 +469,7 @@ const onCancelRoute = () => {
                             :class="{ 'green-icon': isAutoFollowEnabled }"
                             :onClick="toggleAutoFollow"
                         >
-                            <Icon
-                                v-if="isAutoFollowEnabled"
-                                name="lucide:locate-fixed"
-                                class="icon"
-                            />
+                            <Icon v-if="isAutoFollowEnabled" name="lucide:locate-fixed" class="icon" />
                             <Icon v-else name="lucide:locate" class="icon" />
                         </HudButton>
 
@@ -594,47 +483,36 @@ const onCancelRoute = () => {
 
                         <HudButton
                             :is-active="isClickingEnabled"
-                            :class="
-                                isClickingEnabled ? 'green-icon' : 'red-icon'
-                            "
+                            :class="isClickingEnabled ? 'green-icon' : 'red-icon'"
                             :onClick="toggleEnableClicking"
                         >
-                            <Icon
-                                v-if="isClickingEnabled"
-                                name="lucide:pointer"
-                                class="icon"
-                            />
-                            <Icon
-                                v-else
-                                name="lucide:pointer-off"
-                                class="icon"
-                            />
+                            <Icon v-if="isClickingEnabled" name="lucide:pointer" class="icon" />
+                            <Icon v-else name="lucide:pointer-off" class="icon" />
                         </HudButton>
                     </div>
 
+                    <!-- 限速显示 -->
                     <SpeedLimit
-                        v-show="
-                            speedLimit > 0 &&
-                            settings.activeUiComponents.includes('speedLimit')
-                        "
+                        v-show="speedLimit > 0 && settings.activeUiComponents.includes('speedLimit')"
                         :truck-speed="truckSpeed"
                         :speed-limit="speedLimit"
                     />
 
+                    <!-- 警告提示 -->
                     <div class="warnings">
                         <WarningSlide
                             :show-if="hasInGameMarker && !isRouteActive"
                             :reset-on="isRouteActive"
-                            text="External Route Detected: Set Waypoint"
+                            text="检测到外部路线: 设置导航点"
                         />
-
                         <WarningSlide
                             :show-if="!gameConnected"
                             :reset-on="gameConnected"
-                            text="Game Offline"
+                            text="游戏未连接"
                         />
                     </div>
 
+                    <!-- 底部导航详情面板 -->
                     <Transition name="sheet-slide" @after-leave="onSheetClosed">
                         <SheetSlide
                             v-if="isRouteActive"
@@ -652,6 +530,7 @@ const onCancelRoute = () => {
                 </div>
             </Transition>
 
+            <!-- 设置面板 -->
             <Transition name="panel-pop">
                 <SettingsPanel
                     v-show="isSettingsPanelOpened"

@@ -8,7 +8,7 @@ defineProps<{
 </script>
 
 <template>
-    <button class="option-btn" @click.prevent="onClick">
+    <button class="option-btn" @click.prevent.stop="onClick">
         <slot />
     </button>
 </template>

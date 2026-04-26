@@ -59,7 +59,7 @@ const DEFAULT_PROFILE: GameProfile = {
     voiceURI: null,
     voiceMode: "standard",
     voicePersona: "standard",
-    mapTheme: "light",
+    mapTheme: "dark",
     maneuverDistance: 1.5,
     fontFamily: "Quicksand",
 };
@@ -183,13 +183,6 @@ export const useSettings = () => {
 
                 settings.value = mergedSettings;
 
-                // Migration: Force metric if the user requested Chinese habit but local storage is stuck on imperial
-                if (settings.value.profiles.ats.units === "imperial") {
-                    settings.value.profiles.ats.units = "metric";
-                }
-                if (settings.value.profiles.ets2.units === "imperial") {
-                    settings.value.profiles.ets2.units = "metric";
-                }
                 saveSettings();
             } catch (e) {
                 console.error("Corrupt settings found, resetting to defaults.");

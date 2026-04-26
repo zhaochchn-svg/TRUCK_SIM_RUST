@@ -133,7 +133,7 @@ watch(
                         />
                         <div>
                             <div class="value">{{ routeEta }}</div>
-                            <div class="label">预计到达时间</div>
+                            <div class="label">预计用时</div>
                         </div>
                     </div>
 

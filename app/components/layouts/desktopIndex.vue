@@ -12,6 +12,7 @@ const isWindowOpened = ref(false);
 const etsActive = ref(false);
 const atsActive = ref(false);
 const platform = ref("win32");
+let bootTimer: ReturnType<typeof setInterval> | null = null;
 
 const pluginFolderHint = computed(() =>
     platform.value === "darwin"
@@ -46,9 +47,12 @@ onMounted(async () => {
 
     (window as any).electronAPI.setWindowSize(900, 600, false, false);
     checkStatus();
-    const bootTimer = setInterval(async () => {
+    bootTimer = setInterval(async () => {
         if (isServerRunning.value) {
-            clearInterval(bootTimer);
+            if (bootTimer) {
+                clearInterval(bootTimer);
+                bootTimer = null;
+            }
             startRegularPolling();
             return;
         }
@@ -71,6 +75,7 @@ const handleExplorerLaunch = async (gameName: string) => {
 };
 
 onUnmounted(() => {
+    if (bootTimer) clearInterval(bootTimer);
     if (polling.value) clearInterval(polling.value);
 });
 
