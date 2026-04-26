@@ -1,0 +1,244 @@
+import { Capacitor } from "@capacitor/core";
+import {
+    getGameState,
+    getJobState,
+    getNavigationState,
+    getTruckState,
+} from "~/assets/utils/telemetry/helpers";
+import type {
+    TruckState,
+    GameState,
+    NavigationState,
+    JobState,
+    TelemetryUpdate,
+    TelemetryPacket,
+} from "~/types";
+
+const truckState = reactive<TruckState>({
+    truckCoords: [0, 0],
+    truckHeading: 0,
+    truckSpeed: 0,
+    averageSpeed: 80,
+});
+
+const gameState = reactive<GameState>({
+    gameTime: "",
+    gameConnected: false,
+    hasInGameMarker: false,
+    scale: 0,
+});
+
+const navigationState = reactive<NavigationState>({
+    fuel: 0,
+    speedLimit: 0,
+    restStoptime: "",
+    restStopMinutes: 0,
+});
+
+const jobState = reactive<JobState>({
+    hasActiveJob: false,
+    income: 0,
+    deadlineTime: new Date(),
+    remainingTime: new Date(),
+    sourceCity: "0",
+    sourceCompany: "0",
+    destinationCity: "0",
+    destinationCompany: "0",
+});
+
+let lastPosition: [number, number] | null = null;
+let headingOffset = 0;
+
+let socket: WebSocket | null = null;
+
+export function useEtsTelemetry() {
+    const { settings } = useSettings();
+
+    const isCapacitor = Capacitor.isNativePlatform();
+
+    let speedSamples: number[] = [];
+    const maxSamples = 120;
+
+    function startTelemetry(onUpdate?: (data: TelemetryUpdate) => void) {
+        if (socket) return;
+
+        const ip = isCapacitor
+            ? settings.value.savedIP
+            : window.location.hostname;
+        const url = `ws://${ip}:30001`;
+
+        socket = new WebSocket(url);
+
+        socket.onopen = () => {
+            console.log("[RustBridge] Connected");
+        };
+
+        socket.onmessage = (event) => {
+            try {
+                const response = JSON.parse(event.data);
+                
+                if (response.type === "TELEMETRY") {
+                    const data = response.payload as TelemetryPacket;
+
+                    if (data.game.toLowerCase() !== settings.value.selectedGame) {
+                        resetDataOnDisconnected(onUpdate);
+                        return;
+                    }
+
+                    if (data) {
+                        processData(data, onUpdate);
+                    }
+                } else if (response.type === "ROUTE_RESULT") {
+                    console.log("[RustBridge] Route received");
+                    window.dispatchEvent(new CustomEvent("route-result", { detail: response.payload }));
+                }
+            } catch (e) {
+                console.error("Data error", e);
+            }
+        };
+
+        socket.onclose = () => {
+            socket = null;
+            resetDataOnDisconnected(onUpdate);
+            setTimeout(() => startTelemetry(onUpdate), 3000);
+        };
+    }
+
+    function stopTelemetry() {
+        if (socket) {
+            socket.close();
+            socket = null;
+        }
+    }
+
+    function sendWsMessage(message: any) {
+        if (socket && socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify(message));
+            return true;
+        }
+        return false;
+    }
+
+    function processData(
+        data: TelemetryPacket,
+        onUpdate?: (data: TelemetryUpdate) => void,
+    ) {
+        const { gameConnected, hasInGameMarker, gameTime, scale } =
+            getGameState(data);
+
+        Object.assign(gameState, {
+            gameTime: gameTime,
+            gameConnected: gameConnected,
+            hasInGameMarker: hasInGameMarker,
+            scale: scale,
+        });
+
+        const {
+            truckCoords,
+            truckSpeed,
+            truckHeading,
+            headingOffset: newOffset,
+            avgSpeed,
+        } = getTruckState(
+            data,
+            lastPosition,
+            settings.value.selectedGame,
+            headingOffset,
+            speedSamples,
+            maxSamples,
+        );
+
+        Object.assign(truckState, {
+            truckCoords: truckCoords,
+            truckHeading: truckHeading,
+            truckSpeed: truckSpeed,
+            averageSpeed: avgSpeed,
+        });
+
+        lastPosition = truckCoords;
+        headingOffset = newOffset;
+
+        const { fuel, speedLimit, restStoptime, restStopMinutes } =
+            getNavigationState(data);
+
+        Object.assign(navigationState, {
+            restStoptime: restStoptime,
+            restStopMinutes: restStopMinutes,
+            speedLimit: speedLimit,
+            fuel: fuel,
+        });
+
+        const {
+            hasActiveJob,
+            cityTarget: destinationCity,
+            companyTarget: destinationCompany,
+        } = getJobState(data, settings.value.selectedGame);
+
+        Object.assign(jobState, {
+            hasActiveJob: hasActiveJob,
+            destinationCity: destinationCity,
+            destinationCompany: destinationCompany,
+        });
+
+        if (onUpdate) {
+            onUpdate({
+                truck: { ...truckState },
+                game: { ...gameState },
+                general: { ...navigationState },
+                job: { ...jobState },
+            });
+        }
+    }
+
+    function resetDataOnDisconnected(
+        onUpdate?: (data: TelemetryUpdate) => void,
+    ) {
+        const wasConnected = gameState.gameConnected;
+        headingOffset = 0;
+        lastPosition = null;
+        speedSamples = [];
+
+        Object.assign(gameState, {
+            gameConnected: false,
+            hasInGameMarker: false,
+            gameTime: "",
+            scale: 0,
+        });
+
+        Object.assign(truckState, {
+            truckCoords: [0, 0],
+            truckHeading: 0,
+            truckSpeed: 0,
+        });
+
+        Object.assign(navigationState, {
+            fuel: 0,
+            speedLimit: 0,
+            restStopMinutes: 0,
+            restStoptime: "0",
+        });
+
+        Object.assign(jobState, {
+            hasActiveJob: false,
+        });
+
+        if (onUpdate && wasConnected) {
+            onUpdate({
+                truck: { ...truckState },
+                game: { ...gameState },
+                general: { ...navigationState },
+                job: { ...jobState },
+            });
+        }
+    }
+
+    return {
+        ...toRefs(navigationState),
+        ...toRefs(truckState),
+        ...toRefs(gameState),
+        ...toRefs(jobState),
+        startTelemetry,
+        stopTelemetry,
+        sendWsMessage,
+    };
+}

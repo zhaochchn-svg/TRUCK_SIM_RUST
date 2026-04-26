@@ -1,0 +1,14 @@
+/Users/zhaoc/IdeaProjects/TRUCKNAV-SIM-RUST/backend/target/release/deps/serde-e14dc9c98b8f3230.d: /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/serde-1.0.228/src/lib.rs /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/serde-1.0.228/src/integer128.rs /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/serde-1.0.228/src/private/mod.rs /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/serde-1.0.228/src/private/de.rs /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/serde-1.0.228/src/private/ser.rs /Users/zhaoc/IdeaProjects/TRUCKNAV-SIM-RUST/backend/target/release/build/serde-65d43fa14511931c/out/private.rs
+
+/Users/zhaoc/IdeaProjects/TRUCKNAV-SIM-RUST/backend/target/release/deps/libserde-e14dc9c98b8f3230.rlib: /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/serde-1.0.228/src/lib.rs /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/serde-1.0.228/src/integer128.rs /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/serde-1.0.228/src/private/mod.rs /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/serde-1.0.228/src/private/de.rs /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/serde-1.0.228/src/private/ser.rs /Users/zhaoc/IdeaProjects/TRUCKNAV-SIM-RUST/backend/target/release/build/serde-65d43fa14511931c/out/private.rs
+
+/Users/zhaoc/IdeaProjects/TRUCKNAV-SIM-RUST/backend/target/release/deps/libserde-e14dc9c98b8f3230.rmeta: /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/serde-1.0.228/src/lib.rs /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/serde-1.0.228/src/integer128.rs /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/serde-1.0.228/src/private/mod.rs /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/serde-1.0.228/src/private/de.rs /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/serde-1.0.228/src/private/ser.rs /Users/zhaoc/IdeaProjects/TRUCKNAV-SIM-RUST/backend/target/release/build/serde-65d43fa14511931c/out/private.rs
+
+/Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/serde-1.0.228/src/lib.rs:
+/Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/serde-1.0.228/src/integer128.rs:
+/Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/serde-1.0.228/src/private/mod.rs:
+/Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/serde-1.0.228/src/private/de.rs:
+/Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/serde-1.0.228/src/private/ser.rs:
+/Users/zhaoc/IdeaProjects/TRUCKNAV-SIM-RUST/backend/target/release/build/serde-65d43fa14511931c/out/private.rs:
+
+# env-dep:OUT_DIR=/Users/zhaoc/IdeaProjects/TRUCKNAV-SIM-RUST/backend/target/release/build/serde-65d43fa14511931c/out

@@ -1,0 +1,119 @@
+<script lang="ts" setup>
+import { SafeArea, SystemBarsType } from "@capacitor-community/safe-area";
+
+const { isElectron, isMobile, isWeb } = usePlatform();
+const { settings } = useSettings();
+
+const currentView = ref<string>("");
+
+watch(currentView, async () => {
+    await nextTick();
+    updateSystemBars();
+
+    if (isElectron.value) {
+        if (currentView.value === "desktopHome") {
+            (window as any).electronAPI.setWindowSize(900, 600, false, false);
+        }
+    }
+});
+
+const updateSystemBars = async () => {
+    if (!isMobile.value) return;
+
+    try {
+        const isLandscape = window.innerWidth > window.innerHeight;
+
+        if (isLandscape) {
+            await SafeArea.hideSystemBars({ type: SystemBarsType.StatusBar });
+            await SafeArea.hideSystemBars({
+                type: SystemBarsType.NavigationBar,
+            });
+        } else {
+            await SafeArea.showSystemBars({ type: SystemBarsType.StatusBar });
+            await SafeArea.hideSystemBars({
+                type: SystemBarsType.NavigationBar,
+            });
+        }
+    } catch (e) {
+        console.error("Bars update failed", e);
+    }
+};
+
+onMounted(() => {
+    setTimeout(() => {
+        updateSystemBars();
+    }, 500);
+    window.addEventListener("resize", updateSystemBars);
+
+    if (settings.value.selectedGame) {
+        currentView.value = "map";
+    } else if (isWeb.value) {
+        currentView.value = "chooseGame";
+    } else if (isElectron.value) {
+        currentView.value = "desktopHome";
+    } else if (isMobile.value) {
+        currentView.value = "mobileHome";
+    }
+});
+
+onUnmounted(() => {
+    window.removeEventListener("resize", updateSystemBars);
+});
+
+const launchMap = () => {
+    currentView.value = "map";
+};
+
+const launchChooseGame = () => {
+    currentView.value = "chooseGame";
+};
+
+const goToDesktopIndex = () => {
+    currentView.value = "desktopHome";
+};
+
+const goHome = () => {
+    const { updateGlobal } = useSettings();
+    updateGlobal("selectedGame", null);
+    
+    if (isElectron.value) currentView.value = "desktopHome";
+    if (isMobile.value) currentView.value = "mobileHome";
+    if (isWeb.value) currentView.value = "chooseGame";
+};
+</script>
+
+<template>
+    <template v-if="isElectron">
+        <Transition name="page-fade">
+            <DesktopIndex
+                v-show="currentView === 'desktopHome'"
+                :launch-choose-game="launchChooseGame"
+            />
+        </Transition>
+    </template>
+
+    <Transition name="page-fade">
+        <ChooseGame
+            v-show="currentView === 'chooseGame'"
+            :launch-map="launchMap"
+            :go-to-desktop-index="goToDesktopIndex"
+        />
+    </Transition>
+
+    <template v-if="isMobile">
+        <Transition name="page-fade">
+            <MobileIndex
+                v-show="currentView === 'mobileHome'"
+                @connected="currentView = 'map'"
+            />
+        </Transition>
+    </template>
+
+    <Transition name="page-fade">
+        <LazyMap
+            v-if="currentView === 'map'"
+            :goHome="goHome"
+            :key="settings.selectedGame ?? 'none'"
+        />
+    </Transition>
+</template>

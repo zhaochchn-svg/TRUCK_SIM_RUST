@@ -1,0 +1,116 @@
+$sign-size: 52px;
+
+.map-speed-overlay {
+    position: absolute;
+    bottom: 90px; /* Lifted up to avoid the bottom info bar */
+    left: 20px;
+    display: flex;
+    flex-direction: column; /* Stack vertically */
+    align-items: center;
+    gap: 8px;
+    z-index: 100;
+    pointer-events: none;
+}
+
+// --- Speed Limit Signs ---
+.speed-limit-sign {
+    background-color: #ffffff;
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.25);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    color: #222;
+
+    .limit-value {
+        font-weight: 800;
+        line-height: 1;
+    }
+
+    // EU Style (Circle)
+    &.eu-sign {
+        width: $sign-size;
+        height: $sign-size;
+        border-radius: 50%;
+        border: 5px solid #d32f2f; // Classic European Red
+
+        .limit-value {
+            font-size: 1.8rem;
+        }
+    }
+
+    // US Style (Rectangle)
+    &.us-sign {
+        width: calc($sign-size - 6px);
+        height: $sign-size;
+        border-radius: 4px;
+        border: 2px solid #222;
+        padding: 2px;
+
+        .us-sign-label {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            font-size: 0.5rem;
+            font-weight: 800;
+            line-height: 1;
+            margin-bottom: 2px;
+        }
+
+        .limit-value {
+            font-size: 1.6rem;
+        }
+    }
+}
+
+// --- Current Speed Bubble ---
+.current-speed-bubble {
+    background-color: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(4px);
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.2);
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+
+    .speed-num {
+        font-size: 2rem;
+        font-weight: 800;
+        line-height: 1;
+        color: #1a73e8; // Google Maps Blue
+        margin-top: 4px;
+        letter-spacing: -0.5px;
+    }
+
+    .speed-unit {
+        font-size: 0.65rem;
+        font-weight: 800;
+        color: #5f6368;
+        text-transform: lowercase;
+        margin-top: 1px;
+        letter-spacing: 0.2px;
+    }
+
+    &.over-limit {
+        background-color: #d32f2f;
+        border-color: #b71c1c;
+        
+        .speed-num, .speed-unit {
+            color: #ffffff;
+        }
+    }
+}
+
+// --- Transitions ---
+.slide-fade-enter-active, .slide-fade-leave-active {
+    transition: all 0.4s ease;
+}
+.slide-fade-enter-from, .slide-fade-leave-to {
+    opacity: 0;
+    transform: translateX(-20px);
+}

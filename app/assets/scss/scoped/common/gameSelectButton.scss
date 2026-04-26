@@ -1,0 +1,45 @@
+.game-btn {
+    height: 100%;
+    width: 100%;
+
+    border-radius: 6px;
+    background-color: $primaryDarkerColor;
+
+    &.is-selected {
+        outline: 2px solid var(--theme-color);
+        color: $white-font-text;
+        opacity: 1;
+    }
+
+    display: flex;
+    flex-direction: column;
+
+    opacity: 0.5;
+    transition: 0.3s opacity;
+    color: gray;
+
+    cursor: pointer;
+}
+
+.game-name-wrapper {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 0.8rem;
+
+    padding: 12px;
+}
+
+.game-name {
+    font-size: 1.8rem;
+    letter-spacing: 0.4px;
+
+    text-transform: uppercase;
+}
+
+img {
+    width: 100%;
+    object-fit: cover;
+
+    border-radius: 6px;
+}

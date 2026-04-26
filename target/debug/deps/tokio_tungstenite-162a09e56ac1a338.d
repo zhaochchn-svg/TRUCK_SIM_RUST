@@ -1,0 +1,10 @@
+/Users/zhaoc/IdeaProjects/TRUCKNAV-SIM-RUST/target/debug/deps/tokio_tungstenite-162a09e56ac1a338.d: /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/tokio-tungstenite-0.29.0/src/lib.rs /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/tokio-tungstenite-0.29.0/src/compat.rs /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/tokio-tungstenite-0.29.0/src/connect.rs /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/tokio-tungstenite-0.29.0/src/handshake.rs /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/tokio-tungstenite-0.29.0/src/stream.rs /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/tokio-tungstenite-0.29.0/src/tls.rs
+
+/Users/zhaoc/IdeaProjects/TRUCKNAV-SIM-RUST/target/debug/deps/libtokio_tungstenite-162a09e56ac1a338.rmeta: /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/tokio-tungstenite-0.29.0/src/lib.rs /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/tokio-tungstenite-0.29.0/src/compat.rs /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/tokio-tungstenite-0.29.0/src/connect.rs /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/tokio-tungstenite-0.29.0/src/handshake.rs /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/tokio-tungstenite-0.29.0/src/stream.rs /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/tokio-tungstenite-0.29.0/src/tls.rs
+
+/Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/tokio-tungstenite-0.29.0/src/lib.rs:
+/Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/tokio-tungstenite-0.29.0/src/compat.rs:
+/Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/tokio-tungstenite-0.29.0/src/connect.rs:
+/Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/tokio-tungstenite-0.29.0/src/handshake.rs:
+/Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/tokio-tungstenite-0.29.0/src/stream.rs:
+/Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/tokio-tungstenite-0.29.0/src/tls.rs:

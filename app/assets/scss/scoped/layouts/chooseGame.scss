@@ -1,0 +1,85 @@
+.choose-game-section {
+    width: 100vw;
+    height: 100dvh;
+
+    display: flex;
+    flex-direction: column;
+
+    padding: 8px 16px;
+}
+
+.game-selection {
+    flex-grow: 1;
+    display: flex;
+    align-self: center;
+    justify-content: center;
+
+    padding: 4.8rem 0px;
+}
+
+.select-btns {
+    align-self: center;
+}
+
+.top-tagline {
+    height: 4rem;
+
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+
+    font-size: 1.6rem;
+    font-weight: 600;
+
+    .icon {
+        color: $blue-color;
+    }
+
+    margin-bottom: 0.6rem;
+}
+
+.back-btn {
+    display: flex;
+    align-self: center;
+    cursor: pointer;
+}
+
+.btn {
+    width: 55%;
+    align-self: center;
+    border-radius: 4px;
+
+    transition: 0.2s ease-out;
+    margin-bottom: 3.2rem;
+    color: var(--main-text-color);
+
+    &:focus {
+        outline: none;
+    }
+}
+
+.footer-actions {
+    display: flex;
+    justify-content: center;
+    padding-bottom: 2rem;
+}
+
+.clear-cache-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: transparent;
+    border: none;
+    color: rgba(255, 255, 255, 0.4);
+    font-size: 1.2rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    padding: 8px 12px;
+    border-radius: 6px;
+
+    &:active {
+        color: $red-color;
+        background-color: rgba(221, 74, 52, 0.1);
+    }
+}

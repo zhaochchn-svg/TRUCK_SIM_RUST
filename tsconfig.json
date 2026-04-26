@@ -1,0 +1,27 @@
+{
+    // https://nuxt.com/docs/guide/concepts/typescript
+    "files": [],
+    "references": [
+        {
+            "path": "./.nuxt/tsconfig.app.json"
+        },
+        {
+            "path": "./.nuxt/tsconfig.server.json"
+        },
+        {
+            "path": "./.nuxt/tsconfig.shared.json"
+        },
+        {
+            "path": "./.nuxt/tsconfig.node.json"
+        }
+    ],
+    "compilerOptions": {
+        "moduleResolution": "bundler",
+        "module": "esnext",
+        "target": "es2022",
+        "allowImportingTsExtensions": true,
+        "noEmit": true
+    },
+    "include": ["e2e/**/*.ts"],
+    "exclude": ["node_modules"]
+}

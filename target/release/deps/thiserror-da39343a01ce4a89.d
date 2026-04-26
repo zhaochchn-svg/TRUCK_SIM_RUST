@@ -1,0 +1,14 @@
+/Users/zhaoc/IdeaProjects/TRUCKNAV-SIM-RUST/target/release/deps/thiserror-da39343a01ce4a89.d: /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/thiserror-2.0.18/src/lib.rs /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/thiserror-2.0.18/src/aserror.rs /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/thiserror-2.0.18/src/display.rs /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/thiserror-2.0.18/src/var.rs /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/thiserror-2.0.18/src/private.rs /Users/zhaoc/IdeaProjects/TRUCKNAV-SIM-RUST/target/release/build/thiserror-5fe1c5a756f13b63/out/private.rs
+
+/Users/zhaoc/IdeaProjects/TRUCKNAV-SIM-RUST/target/release/deps/libthiserror-da39343a01ce4a89.rlib: /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/thiserror-2.0.18/src/lib.rs /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/thiserror-2.0.18/src/aserror.rs /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/thiserror-2.0.18/src/display.rs /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/thiserror-2.0.18/src/var.rs /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/thiserror-2.0.18/src/private.rs /Users/zhaoc/IdeaProjects/TRUCKNAV-SIM-RUST/target/release/build/thiserror-5fe1c5a756f13b63/out/private.rs
+
+/Users/zhaoc/IdeaProjects/TRUCKNAV-SIM-RUST/target/release/deps/libthiserror-da39343a01ce4a89.rmeta: /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/thiserror-2.0.18/src/lib.rs /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/thiserror-2.0.18/src/aserror.rs /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/thiserror-2.0.18/src/display.rs /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/thiserror-2.0.18/src/var.rs /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/thiserror-2.0.18/src/private.rs /Users/zhaoc/IdeaProjects/TRUCKNAV-SIM-RUST/target/release/build/thiserror-5fe1c5a756f13b63/out/private.rs
+
+/Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/thiserror-2.0.18/src/lib.rs:
+/Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/thiserror-2.0.18/src/aserror.rs:
+/Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/thiserror-2.0.18/src/display.rs:
+/Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/thiserror-2.0.18/src/var.rs:
+/Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/thiserror-2.0.18/src/private.rs:
+/Users/zhaoc/IdeaProjects/TRUCKNAV-SIM-RUST/target/release/build/thiserror-5fe1c5a756f13b63/out/private.rs:
+
+# env-dep:OUT_DIR=/Users/zhaoc/IdeaProjects/TRUCKNAV-SIM-RUST/target/release/build/thiserror-5fe1c5a756f13b63/out

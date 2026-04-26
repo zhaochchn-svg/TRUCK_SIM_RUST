@@ -1,0 +1,63 @@
+{
+    "name": "truck-nav",
+    "type": "module",
+    "private": true,
+    "scripts": {
+        "preinstall": "npx npm-force-resolutions",
+        "build": "nuxt build",
+        "dev": "nuxt dev",
+        "generate": "nuxt generate",
+        "preview": "nuxt preview",
+        "postinstall": "patch-package && nuxt prepare",
+        "electron:sync": "npx nuxi generate && npx cap sync electron && cd electron && npm run electron:start && cd ..",
+        "android:sync": "npx nuxi generate && npx cap sync android && npx cap run android --target=52f73682434f",
+        "telemetry:fetch-sdk": "node telemetry/native/scs-trucknav-plugin/scripts/fetch-scs-sdk.mjs",
+        "telemetry:build:mac": "npm run telemetry:fetch-sdk && make -C telemetry/native/scs-trucknav-plugin darwin",
+        "rust:build": "cd backend && cargo build --release"
+    },
+    "dependencies": {
+        "@capacitor-community/electron": "^5.0.1",
+        "@capacitor-community/keep-awake": "^8.0.0",
+        "@capacitor-community/safe-area": "^8.0.1",
+        "@capacitor/android": "^8.1.0",
+        "@capacitor/cli": "^8.1.0",
+        "@capacitor/core": "^8.1.0",
+        "@capacitor/ios": "^8.0.0",
+        "@nuxt/devtools": "^3.2.1",
+        "@nuxt/icon": "^2.1.0",
+        "@nuxt/ui": "^4.4.0",
+        "@turf/turf": "^7.3.1",
+        "eruda": "^3.4.3",
+        "maplibre-gl": "^5.14.0",
+        "nosleep.js": "^0.12.0",
+        "nuxt": "^4.3.1",
+        "nuxt-color-picker": "^1.2.8",
+        "pmtiles": "^4.3.0",
+        "proj4": "^2.20.2",
+        "rbush": "^4.0.1",
+        "tailwindcss": "^4.2.0",
+        "vue": "^3.5.24",
+        "vue-router": "^4.6.4",
+        "ws": "^8.19.0"
+    },
+    "devDependencies": {
+        "@iconify-json/lucide": "^1.2.102",
+        "@iconify-json/map": "^1.2.2",
+        "@iconify-json/svg-spinners": "^1.2.4",
+        "@types/electron": "^1.4.38",
+        "@types/node": "^25.2.3",
+        "@types/rbush": "^4.0.0",
+        "@types/ws": "^8.18.1",
+        "electron": "^39.2.7",
+        "npm-force-resolutions": "^0.0.10",
+        "patch-package": "^8.0.1",
+        "sass-embedded": "^1.99.0",
+        "ts-node": "^10.9.2",
+        "typescript": "^5.9.3"
+    },
+    "resolutions": {
+        "glob": "11.0.5",
+        "tar": "7.5.8",
+        "pmtiles": "4.3.0"
+    }
+}

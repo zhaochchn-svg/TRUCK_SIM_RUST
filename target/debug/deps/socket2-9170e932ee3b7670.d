@@ -1,0 +1,9 @@
+/Users/zhaoc/IdeaProjects/TRUCKNAV-SIM-RUST/target/debug/deps/socket2-9170e932ee3b7670.d: /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/socket2-0.6.3/src/lib.rs /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/socket2-0.6.3/src/sockaddr.rs /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/socket2-0.6.3/src/socket.rs /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/socket2-0.6.3/src/sockref.rs /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/socket2-0.6.3/src/sys/unix.rs
+
+/Users/zhaoc/IdeaProjects/TRUCKNAV-SIM-RUST/target/debug/deps/libsocket2-9170e932ee3b7670.rmeta: /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/socket2-0.6.3/src/lib.rs /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/socket2-0.6.3/src/sockaddr.rs /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/socket2-0.6.3/src/socket.rs /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/socket2-0.6.3/src/sockref.rs /Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/socket2-0.6.3/src/sys/unix.rs
+
+/Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/socket2-0.6.3/src/lib.rs:
+/Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/socket2-0.6.3/src/sockaddr.rs:
+/Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/socket2-0.6.3/src/socket.rs:
+/Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/socket2-0.6.3/src/sockref.rs:
+/Users/zhaoc/.cargo/registry/src/mirrors.ustc.edu.cn-5857e57f01837ef8/socket2-0.6.3/src/sys/unix.rs:

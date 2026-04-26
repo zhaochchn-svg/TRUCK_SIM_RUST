@@ -1,0 +1,1 @@
+/Users/zhaoc/IdeaProjects/TRUCKNAV-SIM-RUST/backend/target/release/trucknav-sim-rust: /Users/zhaoc/IdeaProjects/TRUCKNAV-SIM-RUST/backend/src/main.rs /Users/zhaoc/IdeaProjects/TRUCKNAV-SIM-RUST/backend/src/routing.rs

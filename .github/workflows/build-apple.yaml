@@ -1,0 +1,76 @@
+name: Build macOS and iOS Apps
+
+on:
+    workflow_dispatch: # Allows to trigger it manually from the GitHub website
+
+jobs:
+    build-mac-ios:
+        runs-on: macos-latest # This tells GitHub to give a free Mac
+
+        steps:
+            - name: Checkout Code
+              uses: actions/checkout@v4
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "22"
+
+            - name: Install Dependencies
+              run: npm install
+
+            - name: Build Nuxt Web App
+              run: |
+                  npx nuxi build
+                  npx nuxi generate
+
+            # ---------------------------------------------------------
+            # BUILD macOS APP (ELECTRON)
+            # ---------------------------------------------------------
+            - name: Build macOS Electron App
+              run: |
+                  cd electron
+                  npm install
+                  npm run electron:make -- --mac
+
+            - name: Upload macOS App to GitHub
+              uses: actions/upload-artifact@v4
+              with:
+                  name: TruckNav-macOS
+                  path: |
+                      electron/dist/*.dmg
+                      electron/dist/*.zip
+                      electron/dist/*.pkg
+
+            # ---------------------------------------------------------
+            # BUILD iOS APP (CAPACITOR)
+            # ---------------------------------------------------------
+            - name: Sync Capacitor to iOS
+              run: |
+                  npm install @capacitor/ios
+                  npx cap add ios || true
+                  npx cap sync ios
+                  npx cap update ios || true
+
+            - name: Build Unsigned iOS App (.ipa)
+              run: |
+                  cd ios/App
+
+                  if [ -d "App.xcworkspace" ]; then
+                    TARGET="-workspace App.xcworkspace"
+                  else
+                    TARGET="-project App.xcodeproj"
+                  fi
+
+                  xcodebuild build $TARGET -scheme App -configuration Release -sdk iphoneos CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO SYMROOT=$(pwd)/build
+
+                  cd build/Release-iphoneos
+                  mkdir Payload
+                  cp -R App.app Payload/
+                  zip -r TruckNav-iOS.ipa Payload
+
+            - name: Upload iOS App to GitHub
+              uses: actions/upload-artifact@v4
+              with:
+                  name: TruckNav-iOS
+                  path: ios/App/build/Release-iphoneos/TruckNav-iOS.ipa

@@ -1,0 +1,87 @@
+//
+//
+//
+// ----------------------> MAP <----------------------
+.map-container {
+    width: 100vw;
+    height: 100dvh;
+
+    background-color: #272d39;
+    touch-action: none;
+}
+
+.map-container * {
+    outline: none !important;
+}
+
+.ui-safe-container {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100vw;
+
+    height: calc(100dvh - env(safe-area-inset-top));
+    pointer-events: none;
+    z-index: 10;
+}
+
+.ui-safe-container > * {
+    pointer-events: auto;
+}
+
+.full-page-wrapper {
+    overflow: hidden;
+    position: fixed;
+}
+
+.left-buttons {
+    position: absolute;
+    top: calc($game-info-bar-height + 1.8rem);
+    left: 10px;
+
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+
+    @media (orientation: portrait) {
+        top: calc($game-info-bar-height + 1.8rem);
+    }
+}
+
+.hud-buttons {
+    position: absolute;
+    top: calc($game-info-bar-height + 1.8rem);
+    right: 10px;
+
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+
+    @media (orientation: portrait) {
+        top: calc($game-info-bar-height + 1.8rem);
+    }
+
+    .red-icon {
+        color: $red-color;
+    }
+
+    .green-icon {
+        color: $green-color;
+    }
+}
+
+.warnings {
+    position: absolute;
+    bottom: calc(30px + $game-info-bar-height);
+    right: -2px;
+
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.8rem;
+}
+
+.icon {
+    width: var(--hud-btn-size);
+    height: var(--hud-btn-size);
+}

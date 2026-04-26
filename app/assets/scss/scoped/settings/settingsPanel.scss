@@ -1,0 +1,295 @@
+$button-padding: 8px 10px;
+
+/**
+ * GENERAL
+ */
+.settings-panel {
+    background-color: $primaryColor;
+    height: 100dvh;
+    width: 100dvw;
+
+    padding-top: 1.8rem;
+    font-weight: 600;
+
+    display: flex;
+    flex-direction: column;
+}
+
+.settings-wrapper {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.setting {
+    padding-left: 2rem;
+    padding-right: 2rem;
+    color: $white-font-text;
+
+    font-size: 1.8rem;
+}
+
+.menu-list {
+    overflow-y: auto;
+
+    display: flex;
+
+    flex-direction: column;
+    gap: 1.6rem;
+
+    &.main {
+        gap: 2.6rem;
+    }
+
+    padding-bottom: 3.2rem;
+
+    /* Hide scrollbar for browsers */
+    &::-webkit-scrollbar {
+        display: none;
+    }
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+}
+
+.selector {
+    min-width: 150px;
+    max-width: 200px;
+
+    background: $default-background-color-dark;
+    border-radius: 5px;
+
+    padding: $button-padding;
+
+    font-weight: 700;
+    font-size: 1.6rem;
+    color: $white-font-text;
+
+    cursor: pointer;
+}
+
+.settings-title {
+    padding-left: 2rem;
+
+    font-size: 1.4rem;
+
+    display: flex;
+    align-content: center;
+    align-items: center;
+    gap: 1.8rem;
+
+    width: 100%;
+}
+
+.icon-btn {
+    min-width: 40px;
+    min-height: 40px;
+    border-radius: 50%;
+    background-color: rgba(255, 255, 255, 0.05);
+    color: $white-font-text;
+
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+
+    &:active {
+        background-color: rgba(255, 255, 255, 0.15);
+        transform: scale(0.9);
+    }
+}
+
+.title-icon {
+    min-width: 38px;
+    min-height: 38px;
+
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.panel-title {
+    font-size: 2rem;
+    font-weight: 600;
+}
+
+.panel-description {
+    opacity: 0.7;
+    font-weight: 500;
+}
+
+.separator {
+    height: 2px;
+    width: 100%;
+    background-color: $secondaryColor;
+    border-radius: 3px;
+
+    margin-bottom: 1.8rem;
+    margin-top: 1.8rem;
+}
+
+.small-separator {
+    height: 1px;
+    width: 90%;
+    align-self: center;
+    flex-shrink: 0;
+    background-color: $secondaryColor;
+    opacity: 0.7;
+    border-radius: 3px;
+}
+
+.settings-btn {
+    border-radius: 5px;
+    transition: 0s;
+    font-weight: 700;
+    box-shadow: none;
+    padding: $button-padding;
+    font-size: 1.6rem;
+
+    transition: 0.2s ease all;
+
+    &.default-color {
+        background-color: $default-background-color-dark;
+        color: $white-font-text;
+    }
+
+    &.increase-decrease {
+        display: flex;
+        padding: 0;
+
+        font-size: 2rem;
+        width: 3.2rem;
+        height: 3.2rem;
+
+        align-items: center;
+        justify-content: center;
+    }
+
+    &:active {
+        opacity: 0.5;
+        transform: translateY(1px);
+    }
+}
+
+.cancel-timer-icon {
+    color: $red-color;
+}
+
+.actual-truck-preview {
+    background-size: contain;
+}
+
+/**
+ * COLOR SETTINGS
+ */
+.color-box {
+    height: 34px;
+    width: 34px;
+    background-color: var(--theme-color);
+    transition:
+        transform 0.2s,
+        border-color 0.2s;
+
+    border-radius: 3px;
+
+    &.active {
+        border-color: white;
+        transform: scale(1.2);
+        box-shadow: 0 0 10px rgba(255, 255, 255, 0.3);
+    }
+}
+
+.option {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.option-title {
+    display: flex;
+    gap: 0.8rem;
+    align-items: center;
+
+    span {
+        width: 24px;
+        height: 24px;
+    }
+}
+
+.color-options {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+}
+
+.increase-option {
+    display: flex;
+    gap: 1.2rem;
+    align-items: center;
+}
+
+.change-color-btn {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, 0.4);
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.15);
+}
+
+.color-picker {
+    background-color: $secondaryColor;
+    border-radius: 4px;
+    padding: 4px;
+}
+
+/**
+ * DLC SETTINGS
+ */
+.owned-dlcs {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+
+    @include for-phone {
+        font-size: 1.2rem;
+    }
+}
+
+/**
+ * SEGMENTED CONTROL SETTINGS
+ */
+.segmented-control {
+    display: flex;
+    gap: 0.8rem;
+    background: $default-background-color-dark;
+    padding: 4px;
+    border-radius: 5px;
+
+    .segment-btn {
+        display: flex;
+        justify-content: center;
+        padding: 4px 6px;
+        color: $white-font-text60;
+        cursor: pointer;
+        border-radius: 4px;
+        transition: all 0.2s ease;
+
+        .label {
+            font-size: 1.6rem;
+            font-weight: 700;
+        }
+
+        &.active {
+            background: var(--theme-color);
+            color: var(--main-text-color);
+            box-shadow: $default-box-shadow;
+        }
+
+        &.activeOff {
+            background-color: $red-color;
+            color: $white-font-text;
+            box-shadow: $default-box-shadow;
+        }
+    }
+}
