@@ -600,6 +600,18 @@ export const useRouteController = (
 
     function findBestStartConfiguration(truckCoords: [number, number], _truckHeading: number, searchLimit: number = 50) {
         if (nodeCoords.size === 0) return null;
+        const headingCandidates = getClosestDestinationNodes(
+            truckCoords,
+            _truckHeading,
+            8,
+        );
+        if (headingCandidates.length > 0) {
+            const nodePos = nodeCoords.get(headingCandidates[0]!);
+            if (nodePos) {
+                return { type: "road", fromId: headingCandidates[0]!, toId: headingCandidates[0]!, projectedCoords: nodePos };
+            }
+        }
+
         const candidates = getClosestNodes(truckCoords, 10, searchLimit / 111);
         let closestNodeId: number | null = null; let minNodeDist = Infinity;
         for (const nodeId of candidates) {

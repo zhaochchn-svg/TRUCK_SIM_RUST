@@ -309,11 +309,49 @@ impl RoutingEngine {
             + Self::eta_turn_delay_seconds(graph_f32, previous_edge_id, next_edge_id)
     }
 
+    fn heading_to_radians(heading: f32) -> f32 {
+        if heading.abs() > std::f32::consts::TAU {
+            heading.to_radians()
+        } else {
+            heading
+        }
+    }
+
+    fn start_heading_penalty_seconds(
+        graph_f32: &[f32],
+        start_heading: Option<f32>,
+        next_stride_idx: usize,
+    ) -> f32 {
+        let Some(start_heading) = start_heading else {
+            return 0.0;
+        };
+
+        if graph_f32[next_stride_idx + 5] > 0.5 {
+            return 0.0;
+        }
+
+        let start_heading = Self::heading_to_radians(start_heading);
+        let next_h_out = graph_f32[next_stride_idx + 4];
+        let diff = Self::angle_diff_radians(start_heading, next_h_out);
+
+        if diff > 2.6 {
+            1_800.0
+        } else if diff > 2.1 {
+            600.0
+        } else if diff > 1.6 {
+            90.0
+        } else if diff > 1.0 {
+            20.0
+        } else {
+            0.0
+        }
+    }
+
     pub fn calculate_route(
         &self,
         start_node: usize,
         possible_ends: &[usize],
-        _start_heading: Option<f32>,
+        start_heading: Option<f32>,
         owned_dlcs: &[i32],
     ) -> Option<RouteResult> {
         // 健壮性检查: 无目的地则直接返回
@@ -373,7 +411,16 @@ impl RoutingEngine {
                 }
 
                 let step_cost =
-                    Self::routing_step_cost_seconds(graph_f32, previous_edge_id, stride_idx);
+                    Self::routing_step_cost_seconds(graph_f32, previous_edge_id, stride_idx)
+                        + if edge_id == start_edge_fake_id {
+                            Self::start_heading_penalty_seconds(
+                                graph_f32,
+                                start_heading,
+                                stride_idx,
+                            )
+                        } else {
+                            0.0
+                        };
 
                 let next_cost = cost + step_cost;
                 if next_cost < costs[next_edge_idx] {
