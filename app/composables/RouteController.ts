@@ -4,6 +4,8 @@ import {
     getSqDistToSegment,
     DEVIATION_THRESHOLD_SQ,
     getSquaredDist,
+    getBearing,
+    getAngleDiff,
 } from "~/assets/utils/map/maths";
 import { haversine } from "~/assets/utils/routing/helpers";
 import {
@@ -75,6 +77,13 @@ export const useRouteController = (
     const OFF_ROUTE_CONFIRMATION_UPDATES = 6;
     const ROUTE_DEVIATION_THRESHOLD_SQ = DEVIATION_THRESHOLD_SQ * 4;
     const MANEUVER_PASSED_TOLERANCE_KM = 0.012;
+    const PROGRESS_BACKTRACK_TOLERANCE_KM = 0.02;
+    const PROGRESS_LOOKAHEAD_TOLERANCE_KM = 0.35;
+    const ROUTE_SEGMENT_STICKINESS_SQ = ROUTE_DEVIATION_THRESHOLD_SQ * 0.08;
+    const ROUTE_HEADING_PENALTY_SQ = ROUTE_DEVIATION_THRESHOLD_SQ * 0.12;
+    const ARRIVAL_AUTO_STOP_DELAY_MS = 10_000;
+    const ARRIVAL_AUTO_STOP_DISTANCE_KM = 0.05;
+    let arrivalAutoStopTimer: ReturnType<typeof setTimeout> | null = null;
 
     watch(() => activeSettings.value.themeColor, async (newColor) => {
         if (map.value && map.value.hasImage("destination-icon")) {
@@ -101,6 +110,78 @@ export const useRouteController = (
             projected: [v[0] + t * (w[0] - v[0]), v[1] + t * (w[1] - v[1])] as [number, number],
             t,
         };
+    }
+
+    function getProgressForSegment(
+        kmCache: Float64Array,
+        segmentIndex: number,
+        t: number,
+    ) {
+        const segmentStartKm = kmCache[segmentIndex] ?? 0;
+        const segmentEndKm = kmCache[segmentIndex + 1] ?? segmentStartKm;
+        return (
+            segmentStartKm +
+            Math.max(0, segmentEndKm - segmentStartKm) * t
+        );
+    }
+
+    function scoreRouteSegmentCandidate(
+        path: readonly [number, number][],
+        kmCache: Float64Array,
+        segmentIndex: number,
+        truckCoords: [number, number],
+        truckHeading: number,
+        currentIndex: number,
+    ) {
+        const p1 = path[segmentIndex]!;
+        const p2 = path[segmentIndex + 1]!;
+        const distSq = getSqDistToSegment(truckCoords, p1, p2);
+        const { t } = projectPointToSegmentWithRatio(truckCoords, p1, p2);
+        const progressKm = getProgressForSegment(kmCache, segmentIndex, t);
+
+        const backtrackKm = Math.max(
+            0,
+            lastRouteProgressKm - progressKm - PROGRESS_BACKTRACK_TOLERANCE_KM,
+        );
+        const lookaheadKm = Math.max(
+            0,
+            progressKm - lastRouteProgressKm - PROGRESS_LOOKAHEAD_TOLERANCE_KM,
+        );
+        const progressPenaltySq =
+            (backtrackKm * backtrackKm + lookaheadKm * lookaheadKm) *
+            ROUTE_DEVIATION_THRESHOLD_SQ *
+            80;
+
+        const segmentHeading = getBearing(p1, p2);
+        const headingPenaltySq =
+            Math.pow(getAngleDiff(truckHeading, segmentHeading) / 180, 2) *
+            ROUTE_HEADING_PENALTY_SQ;
+        const indexPenaltySq =
+            Math.min(Math.abs(segmentIndex - currentIndex), 12) *
+            ROUTE_SEGMENT_STICKINESS_SQ;
+
+        return {
+            index: segmentIndex,
+            distSq,
+            progressKm,
+            score: distSq + headingPenaltySq + indexPenaltySq + progressPenaltySq,
+        };
+    }
+
+    function cancelArrivalAutoStop() {
+        if (!arrivalAutoStopTimer) return;
+        clearTimeout(arrivalAutoStopTimer);
+        arrivalAutoStopTimer = null;
+    }
+
+    function scheduleArrivalAutoStop() {
+        if (arrivalAutoStopTimer) return;
+        arrivalAutoStopTimer = setTimeout(() => {
+            arrivalAutoStopTimer = null;
+            if (isRouteActive.value) {
+                clearRouteState();
+            }
+        }, ARRIVAL_AUTO_STOP_DELAY_MS);
     }
 
     function appendDisplayPoint(points: [number, number][], kms: number[], point: [number, number], km: number) {
@@ -353,6 +434,17 @@ export const useRouteController = (
                 avgSpeed,
             );
         }
+
+        const hasArrivedAtDestination =
+            guidance?.current?.type === "destination" &&
+            guidance.phase === "arrive" &&
+            guidance.distanceKm <= ARRIVAL_AUTO_STOP_DISTANCE_KM;
+
+        if (hasArrivedAtDestination) {
+            scheduleArrivalAutoStop();
+        } else {
+            cancelArrivalAutoStop();
+        }
     }
 
     /**
@@ -444,6 +536,7 @@ export const useRouteController = (
 
     async function handleRouteClick(clickCoords: [number, number], truckCoords: [number, number], truckHeading: number, sdkScale: number, announcement: RouteAnnouncement, avgSpeed: number, destinationLabel?: string) {
         if (isCalculating.value || !isWorkerReady.value) return;
+        cancelArrivalAutoStop();
         isCalculating.value = true;
         isRouteActive.value = true;
         routeFound.value = null;
@@ -519,15 +612,54 @@ export const useRouteController = (
         if (!currentRoutePath.value || currentRoutePath.value.length < 2 || !routeStatsCache.value || !routePathKmCache.value) return;
         const path = currentRoutePath.value;
         const kmCache = routePathKmCache.value;
-        let bestIndex = currentRouteIndex.value;
+        const previousIndex = currentRouteIndex.value;
+        let bestCandidate: ReturnType<typeof scoreRouteSegmentCandidate> | null = null;
+        let bestProgressCandidate: ReturnType<typeof scoreRouteSegmentCandidate> | null = null;
+        let bestForwardCandidate: ReturnType<typeof scoreRouteSegmentCandidate> | null = null;
         let minSqDist = Infinity;
-        const searchLimit = Math.min(path.length - 1, bestIndex + 300);
-        const startSearch = Math.max(0, bestIndex - 30);
+        const searchLimit = Math.min(path.length - 1, previousIndex + 300);
+        const startSearch = Math.max(0, previousIndex - 30);
+        const minimumProgressKm = Math.max(
+            0,
+            lastRouteProgressKm - PROGRESS_BACKTRACK_TOLERANCE_KM,
+        );
+        const maximumProgressKm = lastRouteProgressKm + PROGRESS_LOOKAHEAD_TOLERANCE_KM;
 
         for (let i = startSearch; i < searchLimit; i++) {
-            const distSq = getSqDistToSegment(truckCoords, path[i]!, path[i + 1]!);
-            if (distSq < minSqDist) { minSqDist = distSq; bestIndex = i; }
+            const candidate = scoreRouteSegmentCandidate(
+                path,
+                kmCache,
+                i,
+                truckCoords,
+                truckHeading,
+                previousIndex,
+            );
+            minSqDist = Math.min(minSqDist, candidate.distSq);
+            if (!bestCandidate || candidate.score < bestCandidate.score) {
+                bestCandidate = candidate;
+            }
+            if (
+                candidate.progressKm >= minimumProgressKm &&
+                candidate.progressKm <= maximumProgressKm &&
+                (!bestProgressCandidate || candidate.score < bestProgressCandidate.score)
+            ) {
+                bestProgressCandidate = candidate;
+            }
+            if (
+                candidate.progressKm >= minimumProgressKm &&
+                (!bestForwardCandidate || candidate.score < bestForwardCandidate.score)
+            ) {
+                bestForwardCandidate = candidate;
+            }
         }
+        if (!bestCandidate) return;
+
+        const selectedCandidate =
+            bestProgressCandidate ?? bestForwardCandidate ?? bestCandidate;
+        const bestIndex = Math.max(
+            previousIndex,
+            selectedCandidate.index,
+        );
         currentRouteIndex.value = bestIndex;
 
         const p1 = path[bestIndex]!;
@@ -546,7 +678,6 @@ export const useRouteController = (
             lastRouteProgressKm = Math.max(lastRouteProgressKm, progressKm);
 
             const remainingCoords = [
-                truckCoords,
                 projected,
                 ...path.slice(bestIndex + 1),
             ];
@@ -576,6 +707,7 @@ export const useRouteController = (
     };
 
     function clearRouteState() {
+        cancelArrivalAutoStop();
         if (!map.value) return;
         deleteMapLibreData(map.value, "route-line");
         deleteMapLibreData(map.value, "destination-source");
