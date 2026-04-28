@@ -1,10 +1,10 @@
 use memmap2::Mmap;
+use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
+use std::collections::BinaryHeap;
 use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
-use std::collections::BinaryHeap;
-use std::cmp::Ordering;
-use serde::{Serialize, Deserialize};
 
 #[derive(Copy, Clone, PartialEq)]
 struct State {
@@ -16,7 +16,10 @@ impl Eq for State {}
 
 impl Ord for State {
     fn cmp(&self, other: &Self) -> Ordering {
-        other.cost.partial_cmp(&self.cost).unwrap_or(Ordering::Equal)
+        other
+            .cost
+            .partial_cmp(&self.cost)
+            .unwrap_or(Ordering::Equal)
     }
 }
 
@@ -33,6 +36,7 @@ pub struct RouteResult {
     pub sequence_maneuvers: Vec<i8>,
     pub sequence_exits: Vec<i8>,
     pub node_kms: Vec<f32>,
+    pub node_hours: Vec<f32>,
 }
 
 const GRAPH_STRIDE: usize = 12;
@@ -43,14 +47,17 @@ pub struct GraphData {
 }
 
 impl GraphData {
-	    pub fn load<P: AsRef<Path>>(dir: P) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn load<P: AsRef<Path>>(dir: P) -> Result<Self, Box<dyn std::error::Error>> {
         let graph_path = dir.as_ref().join("graph.bin");
         let geom_path = dir.as_ref().join("geometry.bin");
         let graph_file = File::open(graph_path)?;
         let geom_file = File::open(geom_path)?;
         let graph_mmap = unsafe { Mmap::map(&graph_file)? };
         let geometry_mmap = unsafe { Mmap::map(&geom_file)? };
-        let data = Self { graph_mmap, geometry_mmap };
+        let data = Self {
+            graph_mmap,
+            geometry_mmap,
+        };
         data.validate()?;
         Ok(data)
     }
@@ -113,7 +120,9 @@ impl GraphData {
                 .checked_add(point_count.saturating_mul(2))
                 .ok_or_else(|| format!("graph.bin edge {edge_id} geometry index overflows"))?;
             if geom_end > geom_len {
-                return Err(format!("graph.bin edge {edge_id} references geometry out of bounds").into());
+                return Err(
+                    format!("graph.bin edge {edge_id} references geometry out of bounds").into(),
+                );
             }
         }
 
@@ -144,6 +153,162 @@ impl RoutingEngine {
         Self { data, adjacency }
     }
 
+    fn edge_speed_kph(distance_meters: f32, is_ferry: bool, maneuver_type: i32) -> f32 {
+        if is_ferry {
+            return 45.0;
+        }
+
+        if maneuver_type == 3 {
+            return 35.0;
+        }
+
+        if distance_meters >= 3_000.0 {
+            95.0
+        } else if distance_meters >= 1_200.0 {
+            85.0
+        } else if distance_meters >= 500.0 {
+            65.0
+        } else if distance_meters >= 150.0 {
+            45.0
+        } else {
+            30.0
+        }
+    }
+
+    fn edge_travel_seconds(graph_f32: &[f32], stride_idx: usize) -> f32 {
+        let distance_meters = graph_f32[stride_idx + 2].max(1.0);
+        let is_ferry = graph_f32[stride_idx + 5] > 0.5;
+        let maneuver_type = graph_f32[stride_idx + 10] as i32;
+        let speed_kph = Self::edge_speed_kph(distance_meters, is_ferry, maneuver_type);
+        let mut seconds = distance_meters / (speed_kph / 3.6);
+
+        if is_ferry {
+            seconds += 300.0;
+        }
+
+        seconds.max(1.0)
+    }
+
+    fn signal_or_intersection_delay_seconds(graph_f32: &[f32], stride_idx: usize) -> f32 {
+        // Current graph data has no explicit signal flag, so short junction edges and maneuver types proxy red-light/stop waits.
+        let distance_meters = graph_f32[stride_idx + 2].max(1.0);
+        let is_ferry = graph_f32[stride_idx + 5] > 0.5;
+        let maneuver_type = graph_f32[stride_idx + 10] as i32;
+
+        if is_ferry {
+            return 0.0;
+        }
+
+        match maneuver_type {
+            1 | 2 => 12.0,
+            3 => 6.0,
+            5 => 6.0,
+            6 | 7 => 8.0,
+            _ if distance_meters < 80.0 => 4.0,
+            _ => 0.0,
+        }
+    }
+
+    fn angle_diff_radians(a: f32, b: f32) -> f32 {
+        let mut diff = (a - b).abs();
+        if diff > std::f32::consts::PI {
+            diff = 2.0 * std::f32::consts::PI - diff;
+        }
+        diff
+    }
+
+    fn routing_turn_penalty_seconds(
+        graph_f32: &[f32],
+        previous_edge_id: Option<usize>,
+        next_stride_idx: usize,
+    ) -> f32 {
+        let Some(previous_edge_id) = previous_edge_id else {
+            return 0.0;
+        };
+
+        if graph_f32[next_stride_idx + 5] > 0.5 {
+            return 0.0;
+        }
+
+        let previous_h_in = graph_f32[previous_edge_id * GRAPH_STRIDE + 3];
+        let next_h_out = graph_f32[next_stride_idx + 4];
+        let diff = Self::angle_diff_radians(previous_h_in, next_h_out);
+        let maneuver_type = graph_f32[next_stride_idx + 10] as i32;
+
+        if maneuver_type == 3 {
+            if diff > 1.0 {
+                25.0
+            } else {
+                0.0
+            }
+        } else if diff > 2.8 {
+            1_800.0
+        } else if diff > 1.5 {
+            240.0
+        } else if diff > 1.0 {
+            90.0
+        } else if diff > 0.4 {
+            20.0
+        } else {
+            0.0
+        }
+    }
+
+    fn eta_turn_delay_seconds(
+        graph_f32: &[f32],
+        previous_edge_id: Option<usize>,
+        next_edge_id: usize,
+    ) -> f32 {
+        let Some(previous_edge_id) = previous_edge_id else {
+            return 0.0;
+        };
+
+        let next_stride_idx = next_edge_id * GRAPH_STRIDE;
+        if graph_f32[next_stride_idx + 5] > 0.5 {
+            return 0.0;
+        }
+
+        let previous_h_in = graph_f32[previous_edge_id * GRAPH_STRIDE + 3];
+        let next_h_out = graph_f32[next_stride_idx + 4];
+        let diff = Self::angle_diff_radians(previous_h_in, next_h_out);
+        let maneuver_type = graph_f32[next_stride_idx + 10] as i32;
+
+        if maneuver_type == 3 {
+            8.0
+        } else if diff > 2.8 {
+            45.0
+        } else if diff > 1.5 {
+            25.0
+        } else if diff > 1.0 {
+            12.0
+        } else if diff > 0.4 {
+            5.0
+        } else {
+            0.0
+        }
+    }
+
+    fn routing_step_cost_seconds(
+        graph_f32: &[f32],
+        previous_edge_id: Option<usize>,
+        next_stride_idx: usize,
+    ) -> f32 {
+        Self::edge_travel_seconds(graph_f32, next_stride_idx)
+            + Self::signal_or_intersection_delay_seconds(graph_f32, next_stride_idx)
+            + Self::routing_turn_penalty_seconds(graph_f32, previous_edge_id, next_stride_idx)
+    }
+
+    fn eta_step_seconds(
+        graph_f32: &[f32],
+        previous_edge_id: Option<usize>,
+        next_edge_id: usize,
+    ) -> f32 {
+        let stride_idx = next_edge_id * GRAPH_STRIDE;
+        Self::edge_travel_seconds(graph_f32, stride_idx)
+            + Self::signal_or_intersection_delay_seconds(graph_f32, stride_idx)
+            + Self::eta_turn_delay_seconds(graph_f32, previous_edge_id, next_edge_id)
+    }
+
     pub fn calculate_route(
         &self,
         start_node: usize,
@@ -152,11 +317,15 @@ impl RoutingEngine {
         owned_dlcs: &[i32],
     ) -> Option<RouteResult> {
         // 健壮性检查: 无目的地则直接返回
-        if possible_ends.is_empty() { return None; }
+        if possible_ends.is_empty() {
+            return None;
+        }
 
         let graph_f32 = self.data.get_graph_f32();
         let num_edges = graph_f32.len() / GRAPH_STRIDE;
-        if start_node >= self.adjacency.len() { return None; }
+        if start_node >= self.adjacency.len() {
+            return None;
+        }
         let start_edge_fake_id = num_edges;
 
         let mut costs = vec![f32::INFINITY; num_edges + 1];
@@ -164,46 +333,56 @@ impl RoutingEngine {
         let mut heap = BinaryHeap::new();
 
         costs[start_edge_fake_id] = 0.0;
-        heap.push(State { cost: 0.0, edge_id: start_edge_fake_id });
+        heap.push(State {
+            cost: 0.0,
+            edge_id: start_edge_fake_id,
+        });
 
         let mut found_end_edge = None;
         let ends_set: std::collections::HashSet<usize> = possible_ends.iter().cloned().collect();
 
         // Dijkstra 主循环
         while let Some(State { cost, edge_id }) = heap.pop() {
-            if cost > costs[edge_id] { continue; }
-            let current_node = if edge_id == start_edge_fake_id { start_node } else { graph_f32[edge_id * GRAPH_STRIDE + 1] as usize };
-            if ends_set.contains(&current_node) { found_end_edge = Some(edge_id); break; }
-            let current_h_in = if edge_id == start_edge_fake_id { 0.0 } else { graph_f32[edge_id * GRAPH_STRIDE + 3] };
+            if cost > costs[edge_id] {
+                continue;
+            }
+            let current_node = if edge_id == start_edge_fake_id {
+                start_node
+            } else {
+                graph_f32[edge_id * GRAPH_STRIDE + 1] as usize
+            };
+            if ends_set.contains(&current_node) {
+                found_end_edge = Some(edge_id);
+                break;
+            }
+            let previous_edge_id = if edge_id == start_edge_fake_id {
+                None
+            } else {
+                Some(edge_id)
+            };
 
-            if current_node >= self.adjacency.len() { continue; }
+            if current_node >= self.adjacency.len() {
+                continue;
+            }
 
             for &next_edge_idx in &self.adjacency[current_node] {
                 let stride_idx = next_edge_idx * GRAPH_STRIDE;
                 let req_dlc = graph_f32[stride_idx + 6] as i32;
-                if req_dlc != 0 && !owned_dlcs.contains(&req_dlc) { continue; }
-
-                let weight = graph_f32[stride_idx + 2];
-                let h_out = graph_f32[stride_idx + 4];
-                let mut step_cost = weight;
-
-                if graph_f32[stride_idx + 5] <= 0.5 && edge_id != start_edge_fake_id {
-                    let mut diff = (current_h_in - h_out).abs();
-                    if diff > std::f32::consts::PI { diff = 2.0 * std::f32::consts::PI - diff; }
-                    let maneuver_type = graph_f32[stride_idx + 10] as i32;
-                    if maneuver_type == 3 { if diff > 1.0 { step_cost += 50.0; } } else {
-                        if diff > 2.8 { step_cost += 100_000.0; }
-                        else if diff > 1.5 { step_cost += 10_000.0; }
-                        else if diff > 1.0 { step_cost += 1000.0; }
-                        else if diff > 0.4 { step_cost += 500.0; }
-                    }
+                if req_dlc != 0 && !owned_dlcs.contains(&req_dlc) {
+                    continue;
                 }
+
+                let step_cost =
+                    Self::routing_step_cost_seconds(graph_f32, previous_edge_id, stride_idx);
 
                 let next_cost = cost + step_cost;
                 if next_cost < costs[next_edge_idx] {
                     costs[next_edge_idx] = next_cost;
                     previous[next_edge_idx] = Some(edge_id);
-                    heap.push(State { cost: next_cost, edge_id: next_edge_idx });
+                    heap.push(State {
+                        cost: next_cost,
+                        edge_id: next_edge_idx,
+                    });
                 }
             }
         }
@@ -214,7 +393,8 @@ impl RoutingEngine {
         let mut sequence_maneuvers = Vec::new();
         let mut sequence_exits = Vec::new();
         let mut edge_weights = Vec::new();
-        
+        let mut edge_ids = Vec::new();
+
         let mut curr_edge = end_edge_id;
         let geom_f32 = self.data.get_geometry_f32();
 
@@ -223,7 +403,9 @@ impl RoutingEngine {
         let max_hops = num_edges;
 
         while curr_edge != start_edge_fake_id {
-            if loop_guard > max_hops { break; }
+            if loop_guard > max_hops {
+                break;
+            }
             loop_guard += 1;
 
             let stride_idx = curr_edge * GRAPH_STRIDE;
@@ -231,11 +413,18 @@ impl RoutingEngine {
             sequence_maneuvers.insert(0, graph_f32[stride_idx + 10] as i8);
             sequence_exits.insert(0, graph_f32[stride_idx + 11] as i8);
             edge_weights.insert(0, graph_f32[stride_idx + 2]);
+            edge_ids.insert(0, curr_edge);
 
             let start_pt_idx = graph_f32[stride_idx + 8] as usize;
             let pt_count = graph_f32[stride_idx + 9] as usize;
             for p in (0..pt_count).rev() {
-                path.insert(0, [geom_f32[start_pt_idx + p * 2], geom_f32[start_pt_idx + p * 2 + 1]]);
+                path.insert(
+                    0,
+                    [
+                        geom_f32[start_pt_idx + p * 2],
+                        geom_f32[start_pt_idx + p * 2 + 1],
+                    ],
+                );
             }
 
             match previous[curr_edge] {
@@ -247,15 +436,31 @@ impl RoutingEngine {
         node_sequence.insert(0, start_node);
         sequence_maneuvers.insert(0, 0);
         sequence_exits.insert(0, 0);
-        
+
         let mut node_kms = Vec::with_capacity(node_sequence.len());
+        let mut node_hours = Vec::with_capacity(node_sequence.len());
         let mut total_meters = 0.0;
+        let mut total_seconds = 0.0;
         node_kms.push(0.0);
-        for w in edge_weights {
+        node_hours.push(0.0);
+
+        let mut previous_edge_id = None;
+        for (idx, edge_id) in edge_ids.iter().enumerate() {
+            let w = edge_weights[idx];
             total_meters += w;
+            total_seconds += Self::eta_step_seconds(graph_f32, previous_edge_id, *edge_id);
             node_kms.push(total_meters / 1000.0);
+            node_hours.push(total_seconds / 3600.0);
+            previous_edge_id = Some(*edge_id);
         }
 
-        Some(RouteResult { path, node_sequence, sequence_maneuvers, sequence_exits, node_kms })
+        Some(RouteResult {
+            path,
+            node_sequence,
+            sequence_maneuvers,
+            sequence_exits,
+            node_kms,
+            node_hours,
+        })
     }
 }

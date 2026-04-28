@@ -45,7 +45,7 @@ export function generateDirectionsList(
     let lastStepKm = 0;
     let inRoundabout = false;
 
-    for (let i = 0; i < nodeSequence.length - 1; i++) {
+    for (let i = 1; i < nodeSequence.length; i++) {
         const curr = nodeSequence[i];
         const next = nodeSequence[i + 1];
         const maneuver = sequenceManeuvers[i]!;
@@ -102,7 +102,7 @@ export function generateDirectionsList(
                     text: turnText,
                     distance: 0,
                     cumulativeKm: nodeKms[i],
-                    exitCumulativeKm: nodeKms[i + 1],
+                    exitCumulativeKm: nodeKms[Math.min(i + 1, nodeKms.length - 1)],
                     coords: nodeCoords.get(curr!) || [0, 0],
                     exitCoords: next !== undefined ? (nodeCoords.get(next!) || [0, 0]) : (nodeCoords.get(curr!) || [0, 0]),
                     exitCount: exitCount,
@@ -120,6 +120,7 @@ export function generateDirectionsList(
         type: "destination",
         text: "已到达目的地",
         distance: 0,
+        cumulativeKm: totalKm,
         coords: nodeCoords.get(nodeSequence[nodeSequence.length - 1]!) || [
             0, 0,
         ],

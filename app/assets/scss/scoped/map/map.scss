@@ -46,6 +46,10 @@
     @media (orientation: portrait) {
         top: calc($game-info-bar-height + 1.8rem);
     }
+
+    .green-icon {
+        color: $green-color;
+    }
 }
 
 .offline-badge {

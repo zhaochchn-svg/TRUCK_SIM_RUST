@@ -287,15 +287,29 @@ export function useVoiceNavigation() {
         currentSpeechPriority = 0;
     };
 
+    const clamp = (value: number, min: number, max: number) =>
+        Math.min(max, Math.max(min, value));
+
+    const formatDistanceText = (distanceKm: number) => {
+        if (distanceKm < 0.95) return `${Math.round(distanceKm * 1000)}米`;
+        return `${Math.round(distanceKm * 10) / 10}公里`;
+    };
+
     const processNavigationUpdate = (
         distanceToTurnKm: number,
         maneuverId: number,
         instructionText: string,
-        isDestination: boolean = false
+        isDestination: boolean = false,
+        speedKph: number = 80,
     ) => {
         if (!activeSettings.value.voiceNavigationEnabled) return;
 
         const mode = activeSettings.value.voiceMode || "standard";
+        const safeSpeedKph = Number.isFinite(speedKph) && speedKph > 5 ? speedKph : 80;
+        const actionThresholdKm = clamp((safeSpeedKph * 4) / 3600, 0.045, 0.16);
+        const closeThresholdKm = clamp((safeSpeedKph * 18) / 3600, 0.28, 0.7);
+        const mediumThresholdKm = clamp((safeSpeedKph * 40) / 3600, 0.75, 1.35);
+        const farThresholdKm = clamp((safeSpeedKph * 75) / 3600, 1.5, 2.5);
 
         // If we moved to a new maneuver, reset the threshold state
         if (lastAnnouncedManeuverId.value !== maneuverId) {
@@ -303,8 +317,7 @@ export function useVoiceNavigation() {
             lastAnnouncedThreshold.value = null;
         }
 
-        // Gaode Style Thresholds
-        if (distanceToTurnKm <= 0.05 && lastAnnouncedThreshold.value !== "action") { // ~50 meters: Action time
+        if (distanceToTurnKm <= actionThresholdKm && lastAnnouncedThreshold.value !== "action") {
             speak(transformInstruction(instructionText, isDestination ? "arrive" : "action"), {
                 priority: 3,
                 interrupt: true,
@@ -314,10 +327,13 @@ export function useVoiceNavigation() {
             });
             lastAnnouncedThreshold.value = "action";
         } 
-        else if (distanceToTurnKm <= 0.5 && distanceToTurnKm > 0.05 && lastAnnouncedThreshold.value !== "500m" && lastAnnouncedThreshold.value !== "action") {
+        else if (isDestination) {
+            return;
+        }
+        else if (distanceToTurnKm <= closeThresholdKm && distanceToTurnKm > actionThresholdKm && lastAnnouncedThreshold.value !== "500m" && lastAnnouncedThreshold.value !== "action") {
             if (mode === "standard") {
-                const distStr = Math.round(distanceToTurnKm * 1000) + "米";
-                speak(transformInstruction(`前方 ${distStr} ${instructionText}`, "prep"), {
+                const distStr = formatDistanceText(distanceToTurnKm);
+                speak(transformInstruction(`${distStr}后${instructionText}`, "prep"), {
                     priority: 2,
                     dedupeKey: `maneuver:${maneuverId}:500m`,
                     dedupeWindowMs: 8000,
@@ -326,8 +342,8 @@ export function useVoiceNavigation() {
                 lastAnnouncedThreshold.value = "500m";
             }
         }
-        else if (distanceToTurnKm <= 1.0 && distanceToTurnKm > 0.5 && lastAnnouncedThreshold.value !== "1km" && lastAnnouncedThreshold.value !== "500m" && lastAnnouncedThreshold.value !== "action") {
-            speak(transformInstruction(`前方一公里 ${instructionText}`, "prep"), {
+        else if (distanceToTurnKm <= mediumThresholdKm && distanceToTurnKm > closeThresholdKm && lastAnnouncedThreshold.value !== "1km" && lastAnnouncedThreshold.value !== "500m" && lastAnnouncedThreshold.value !== "action") {
+            speak(transformInstruction(`约${formatDistanceText(distanceToTurnKm)}后${instructionText}`, "prep"), {
                 priority: 1,
                 dedupeKey: `maneuver:${maneuverId}:1km`,
                 dedupeWindowMs: 12000,
@@ -335,9 +351,9 @@ export function useVoiceNavigation() {
             });
             lastAnnouncedThreshold.value = "1km";
         }
-        else if (distanceToTurnKm <= 2.0 && distanceToTurnKm > 1.0 && lastAnnouncedThreshold.value !== "2km" && lastAnnouncedThreshold.value !== "1km" && lastAnnouncedThreshold.value !== "500m" && lastAnnouncedThreshold.value !== "action") {
+        else if (distanceToTurnKm <= farThresholdKm && distanceToTurnKm > mediumThresholdKm && lastAnnouncedThreshold.value !== "2km" && lastAnnouncedThreshold.value !== "1km" && lastAnnouncedThreshold.value !== "500m" && lastAnnouncedThreshold.value !== "action") {
             if (mode === "standard") {
-                speak(transformInstruction(`前方两公里 ${instructionText}`, "prep"), {
+                speak(transformInstruction(`约${formatDistanceText(distanceToTurnKm)}后${instructionText}`, "prep"), {
                     priority: 1,
                     dedupeKey: `maneuver:${maneuverId}:2km`,
                     dedupeWindowMs: 15000,

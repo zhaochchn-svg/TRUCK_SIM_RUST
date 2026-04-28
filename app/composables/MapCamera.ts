@@ -24,6 +24,8 @@ export const useMapCamera = (map: Ref<Map | null>) => {
 
     let currentTruckCoords: [number, number] | null = null;
     let currentTruckHeading: number = 0;
+    let currentCameraBearing: number = 0;
+    let hasCameraBearing = false;
 
     let animationFrameId: number | null = null;
     let isEasing = false;
@@ -32,6 +34,24 @@ export const useMapCamera = (map: Ref<Map | null>) => {
     let autoLockTimer: ReturnType<typeof setTimeout> | null = null;
 
     let markerEl: HTMLDivElement | null = null;
+
+    const angleDelta = (target: number, current: number) => {
+        let delta = target - current;
+        while (delta < -180) delta += 360;
+        while (delta > 180) delta -= 360;
+        return delta;
+    };
+
+    const updateCameraBearing = (desiredBearing: number, smoothing: number) => {
+        if (!hasCameraBearing) {
+            currentCameraBearing = desiredBearing;
+            hasCameraBearing = true;
+            return currentCameraBearing;
+        }
+
+        currentCameraBearing += angleDelta(desiredBearing, currentCameraBearing) * smoothing;
+        return currentCameraBearing;
+    };
 
     const initMarker = (imgSrc: string, size: number) => {
         if (!map.value) return;
@@ -89,11 +109,16 @@ export const useMapCamera = (map: Ref<Map | null>) => {
                 targetCoords[0] === 0 && targetCoords[1] === 0;
 
             if (isCameraLocked.value && !isEasing && !isTargetAtOrigin) {
+                const cameraBearing = isAutoFollowEnabled.value
+                    ? updateCameraBearing(
+                          currentTruckHeading,
+                          isNavigating.value ? 0.12 : 0.2,
+                      )
+                    : 0;
+
                 map.value.jumpTo({
                     center: [currentTruckCoords[0], currentTruckCoords[1]],
-                    bearing: isAutoFollowEnabled.value
-                        ? currentTruckHeading
-                        : 0,
+                    bearing: cameraBearing,
                     padding: isNavigating.value ? PADDING_NAV : PADDING_FREE,
                 });
             }
@@ -103,7 +128,7 @@ export const useMapCamera = (map: Ref<Map | null>) => {
                 const pitch = map.value.getPitch();
                 const bearing = map.value.getBearing();
 
-                const screenRot = currentTruckHeading - bearing;
+                const screenRot = angleDelta(currentTruckHeading, bearing);
 
                 markerEl.style.transform = `translate(-50%, -50%) translate(${pos.x}px, ${pos.y}px) rotateX(${pitch}deg) rotateZ(${screenRot}deg)`;
             }
@@ -164,6 +189,8 @@ export const useMapCamera = (map: Ref<Map | null>) => {
         isAutoFollowEnabled.value = isFollowButtonEnabled ?? true;
         isCameraLocked.value = true;
         isEasing = true;
+        currentCameraBearing = currentTruckHeading;
+        hasCameraBearing = true;
 
         if (easeTimeout) clearTimeout(easeTimeout);
         easeTimeout = setTimeout(() => {
@@ -225,6 +252,8 @@ export const useMapCamera = (map: Ref<Map | null>) => {
         isAutoFollowEnabled.value = true;
         targetCoords = coords;
         targetHeading = heading;
+        currentCameraBearing = heading;
+        hasCameraBearing = true;
 
         isEasing = true;
         if (easeTimeout) clearTimeout(easeTimeout);

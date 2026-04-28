@@ -1,48 +1,55 @@
 .card {
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-
     position: absolute;
     top: calc($game-info-bar-height + 1.8rem);
     left: 50%;
     transform: translate(-50%, 0);
 
+    display: grid;
+    grid-template-columns: 52px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.75rem;
+
     color: $white-font-text;
 
-    width: 53%;
-    height: 90px;
+    width: min(58%, 420px);
+    min-height: 72px;
+    padding: 0.62rem 0.85rem;
 
     background-color: rgb(38, 52, 68, 0.95);
     border: 1px solid $secondaryColor;
     border-radius: 8px;
-
+    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.2);
     backdrop-filter: blur(2px);
 
-    font-size: 1.7rem;
+    font-size: 1rem;
 
     @media (orientation: landscape) {
-        width: 30%;
+        width: min(34%, 390px);
         left: 8%;
         transform: translate(0%, 0);
 
         @media (max-width: 700px) {
             left: 11%;
+            width: min(48%, 340px);
         }
     }
 }
 
-.turn-directions {
-    border-top-left-radius: 8px;
-    border-top-right-radius: 8px;
-
+.primary-turn {
     display: flex;
     justify-content: center;
     align-items: center;
-    gap: 2.1rem;
-    width: 100%;
-    padding: 0.4rem 1.6rem;
-    background-color: rgba($color: #000000, $alpha: 0.15);
+    width: 52px;
+    height: 52px;
+
+    :deep(.icon-wrapper) {
+        width: 52px;
+        height: 52px;
+    }
+
+    :deep(.direction-icon) {
+        opacity: 1;
+    }
 }
 
 .direction-arrow {
@@ -52,8 +59,58 @@
 
 .turn-info {
     display: flex;
-    justify-content: space-between;
-    line-height: 1.23;
-    margin-bottom: 0.4rem;
-    padding: 0.6rem 1.4rem;
+    flex-direction: column;
+    justify-content: center;
+    min-width: 0;
+    gap: 0.08rem;
+    line-height: 1.08;
+
+    .distance {
+        font-size: 1.55rem;
+        font-weight: 750;
+        letter-spacing: 0;
+        white-space: nowrap;
+
+        span {
+            font-size: 0.9rem;
+            font-weight: 700;
+            opacity: 0.86;
+        }
+    }
+
+    .instruction {
+        overflow: hidden;
+        max-width: 100%;
+        font-size: 0.98rem;
+        font-weight: 700;
+        opacity: 0.86;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+}
+
+.next-turn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 42px;
+    min-width: 42px;
+    gap: 0.04rem;
+    opacity: 0.58;
+
+    span {
+        font-size: 0.62rem;
+        font-weight: 700;
+        line-height: 1;
+    }
+
+    :deep(.icon-wrapper) {
+        width: 30px;
+        height: 30px;
+    }
+
+    :deep(.direction-icon) {
+        opacity: 0.65;
+    }
 }

@@ -1,9 +1,11 @@
 import { ref, shallowRef } from "vue";
+import Fuse from "fuse.js";
 import {
     convertAtsToGeo,
     convertEts2ToGeo,
 } from "~/assets/utils/map/converters";
 import { type WorkerCityArea } from "~/assets/utils/routing/algorithm";
+import { haversine } from "~/assets/utils/routing/helpers";
 import type { GameType } from "~/types";
 
 // --- Types ---
@@ -59,10 +61,33 @@ interface RealCompanyModFallback {
     };
 }
 
+export type PoiSearchResultType = "city" | "company" | "scenery";
+
+export interface PoiSearchResult {
+    id: string;
+    type: PoiSearchResultType;
+    label: string;
+    subtitle: string;
+    coordinates: [number, number];
+    stateName: string;
+    stateCode: string;
+    cityName?: string;
+    sprite?: string;
+    aliases: string[];
+    tags: string[];
+}
+
+export interface PoiSearchResponse {
+    results: PoiSearchResult[];
+    total: number;
+}
+
 const scsCitiesData = shallowRef<ScsCity[] | null>(null);
 const villageData = shallowRef<GeoJsonCollection | null>(null);
 const companiesData = shallowRef<GeoJsonCollection | null>(null);
 const realCompanyModData = shallowRef<RealCompanyModFallback | null>(null);
+const poiSearchItems = shallowRef<PoiSearchResult[]>([]);
+let poiSearchFuse: Fuse<PoiSearchResult> | null = null;
 
 const CITY_TRANSLATIONS: Record<string, string> = {
     // ATS
@@ -88,6 +113,12 @@ const COUNTRY_TRANSLATIONS: Record<string, string> = {
     "new_mexico": "新墨西哥州", "texas": "德克萨斯州"
 };
 
+const POI_SEARCH_TYPE_PRIORITY: Record<PoiSearchResultType, number> = {
+    company: 0,
+    city: 1,
+    scenery: 1,
+};
+
 const isLoaded = ref(false);
 const optimizedCityNodes = shallowRef<WorkerCityArea[]>([]);
 const loadedGame = ref<GameType | null>(null);
@@ -108,6 +139,181 @@ export function useCityData() {
         return { en, cn: cn || "" };
     }
 
+    function getDisplayCountry(token: string): string {
+        if (!token) return "";
+        const country = getBilingualCountry(token);
+        return country.cn ? `${country.en} / ${country.cn}` : country.en;
+    }
+
+    function tokenizeStringWithQuotesBySpaces(input: string): string[] {
+        return input.match(/("[^"]*?"|[^"\s]+)+(?=\s*|\s*$)/g) ?? [];
+    }
+
+    function normalizeAlias(value: string | undefined): string {
+        return (value || "")
+            .normalize("NFKD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .replace(/_/g, " ")
+            .toLowerCase()
+            .trim();
+    }
+
+    function compactAliases(values: Array<string | undefined>): string[] {
+        return [...new Set(values.map(normalizeAlias).filter(Boolean))];
+    }
+
+    function findRealCompanyEntry(sprite: string) {
+        if (!realCompanyModData.value) return null;
+        return (
+            realCompanyModData.value[sprite] ??
+            Object.entries(realCompanyModData.value).find(([key]) =>
+                sprite.includes(key),
+            )?.[1] ??
+            null
+        );
+    }
+
+    function findNearestCity(
+        coordinates: [number, number],
+        cityItems: PoiSearchResult[],
+    ): PoiSearchResult | null {
+        let nearest: PoiSearchResult | null = null;
+        let minDistance = Infinity;
+
+        for (const city of cityItems) {
+            const distance = haversine(coordinates, city.coordinates);
+            if (distance < minDistance) {
+                minDistance = distance;
+                nearest = city;
+            }
+        }
+
+        return nearest;
+    }
+
+    function buildPoiSearchIndex() {
+        const items: PoiSearchResult[] = [];
+        const cityItems: PoiSearchResult[] = [];
+        const game = settings.value.selectedGame;
+
+        if (scsCitiesData.value) {
+            for (const city of scsCitiesData.value) {
+                const coordinates =
+                    game === "ets2"
+                        ? convertEts2ToGeo(city.x, city.y)
+                        : convertAtsToGeo(city.x, city.y);
+                const bilingualName = getBilingualName(city.name, city.token);
+                const stateName = getDisplayCountry(city.countryToken);
+                const cityItem: PoiSearchResult = {
+                    id: `city:${city.token}`,
+                    type: "city",
+                    label: city.name,
+                    subtitle: stateName,
+                    coordinates,
+                    stateName,
+                    stateCode: city.countryToken,
+                    aliases: compactAliases([
+                        city.name,
+                        city.token,
+                        bilingualName.cn,
+                        stateName,
+                        city.countryToken,
+                    ]),
+                    tags: ["city"],
+                };
+
+                cityItems.push(cityItem);
+                items.push(cityItem);
+            }
+        }
+
+        if (villageData.value?.features) {
+            for (const feature of villageData.value.features) {
+                const [lng, lat] = feature.geometry.coordinates;
+                const stateCode =
+                    feature.properties.state ||
+                    feature.properties.countryToken ||
+                    "";
+                const stateName = getDisplayCountry(stateCode);
+                items.push({
+                    id: `scenery:${feature.properties.name}:${lng}:${lat}`,
+                    type: "scenery",
+                    label: feature.properties.name,
+                    subtitle: stateName,
+                    coordinates: [lng, lat],
+                    stateName,
+                    stateCode,
+                    aliases: compactAliases([
+                        feature.properties.name,
+                        stateName,
+                        stateCode,
+                    ]),
+                    tags: ["scenery", "village", "town"],
+                });
+            }
+        }
+
+        if (companiesData.value?.features) {
+            for (const feature of companiesData.value.features) {
+                const props = feature.properties;
+                if (props.poiType !== "company" || props.secret === true) {
+                    continue;
+                }
+
+                const coordinates = feature.geometry.coordinates;
+                const nearestCity = findNearestCity(coordinates, cityItems);
+                const realCompany = props.sprite
+                    ? findRealCompanyEntry(props.sprite)
+                    : null;
+                const stateName = nearestCity?.stateName || "";
+                const stateCode = nearestCity?.stateCode || "";
+                const cityName = nearestCity?.label || "";
+                const subtitle = cityName
+                    ? `${cityName}${stateName ? `, ${stateName}` : ""}`
+                    : stateName;
+
+                items.push({
+                    id: `company:${props.sprite || props.poiName}:${coordinates[0]}:${coordinates[1]}`,
+                    type: "company",
+                    label: props.poiName,
+                    subtitle,
+                    coordinates,
+                    stateName,
+                    stateCode,
+                    cityName,
+                    sprite: props.sprite,
+                    aliases: compactAliases([
+                        props.poiName,
+                        props.sprite,
+                        realCompany?.name,
+                        realCompany?.sort_name,
+                        cityName,
+                        stateName,
+                        stateCode,
+                    ]),
+                    tags: ["company", "depot", props.sprite],
+                });
+            }
+        }
+
+        poiSearchItems.value = items;
+        poiSearchFuse = new Fuse(items, {
+            distance: 0,
+            threshold: 0.2,
+            findAllMatches: true,
+            ignoreLocation: true,
+            includeScore: true,
+            keys: [
+                { name: "label", weight: 3 },
+                { name: "cityName", weight: 2 },
+                { name: "stateName", weight: 1.5 },
+                "stateCode",
+                "tags",
+                "aliases",
+            ],
+        });
+    }
+
     async function loadLocationData() {
         if (loadedGame.value === settings.value.selectedGame) return;
 
@@ -115,6 +321,8 @@ export function useCityData() {
         villageData.value = null;
         companiesData.value = null;
         realCompanyModData.value = null;
+        poiSearchItems.value = [];
+        poiSearchFuse = null;
         optimizedCityNodes.value = [];
 
         try {
@@ -158,6 +366,7 @@ export function useCityData() {
             }
 
             optimizedCityNodes.value = getWorkerCityData() || [];
+            buildPoiSearchIndex();
 
             isLoaded.value = true;
             loadedGame.value = settings.value.selectedGame;
@@ -165,6 +374,52 @@ export function useCityData() {
             console.error("Failed to load map data:", e);
             loadedGame.value = null;
         }
+    }
+
+    function searchPoi(query: string, limit = 100): PoiSearchResponse {
+        const trimmedQuery = query.trim();
+
+        if (!poiSearchFuse || trimmedQuery.length < 2) {
+            return { results: [], total: 0 };
+        }
+
+        const tokens = tokenizeStringWithQuotesBySpaces(trimmedQuery);
+        if (!tokens.length) return { results: [], total: 0 };
+
+        const hits = poiSearchFuse.search({
+            $and: tokens.map((token) => ({
+                $or: [
+                    { label: token },
+                    { cityName: token },
+                    { stateName: token },
+                    { stateCode: token },
+                    { tags: token },
+                    { aliases: token },
+                ],
+            })),
+        });
+
+        const sortedHits = [...hits].sort((a, b) => {
+            const scoreDelta = (a.score ?? 0) - (b.score ?? 0);
+            if (scoreDelta !== 0) return scoreDelta;
+
+            const typeDelta =
+                POI_SEARCH_TYPE_PRIORITY[a.item.type] -
+                POI_SEARCH_TYPE_PRIORITY[b.item.type];
+            if (typeDelta !== 0) return typeDelta;
+
+            const cityDelta = (a.item.cityName || "").localeCompare(
+                b.item.cityName || "",
+            );
+            if (cityDelta !== 0) return cityDelta;
+
+            return a.item.label.localeCompare(b.item.label);
+        });
+
+        return {
+            results: sortedHits.slice(0, limit).map((hit) => hit.item),
+            total: sortedHits.length,
+        };
     }
 
     function findDestinationCoords(
@@ -357,5 +612,7 @@ export function useCityData() {
         getGameLocationName,
         getWorkerCityData,
         findDestinationCoords,
+        searchPoi,
+        poiSearchItems,
     };
 }

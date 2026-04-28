@@ -5,6 +5,7 @@ import {
     DEVIATION_THRESHOLD_SQ,
     getSquaredDist,
 } from "~/assets/utils/map/maths";
+import { haversine } from "~/assets/utils/routing/helpers";
 import {
     deleteMapLibreData,
     setMapLibreData,
@@ -13,6 +14,18 @@ import {
     generateDirectionsList,
     type DirectionStep,
 } from "~/assets/utils/routing/directions";
+
+export type GuidancePhase = "cruise" | "prepare" | "action" | "arrive";
+
+export interface ActiveRouteGuidance {
+    current: DirectionStep | null;
+    following: DirectionStep | null;
+    distanceKm: number;
+    phase: GuidancePhase;
+    instruction: string;
+}
+
+type RouteAnnouncement = "start" | "reroute" | "silent";
 
 /**
  * 路由控制组合式函数
@@ -33,11 +46,12 @@ export const useRouteController = (
     // 状态管理
     const currentRoutePath = shallowRef<[number, number][] | null>(null);
     const routeStatsCache = shallowRef<Float32Array | null>(null);
-    const routePathProgressCache = shallowRef<Float64Array | null>(null);
+    const routePathKmCache = shallowRef<Float64Array | null>(null);
     const destinationName = ref<string>("");
     const routeDistance = ref<number>(0);
     const routeEta = ref<string>("");
     const savedDestination = ref<[number, number] | null>(null);
+    const savedDestinationName = ref<string | null>(null);
     const isRouteActive = ref(false);
     const isYardStart = ref(false);
     const startNodeId = ref<number | null>(null);
@@ -49,15 +63,18 @@ export const useRouteController = (
     const isWorkerReady = ref(false);
     const fullRouteDirections = ref<DirectionStep[]>([]);
     const nextTurnDistance = ref<number>(0);
+    const activeGuidance = shallowRef<ActiveRouteGuidance | null>(null);
 
     const isHandlingDeviation = ref(false);
     let lastRerouteTime = 0;
     let routeCalculatedAt = 0;
     let offRouteUpdates = 0;
+    let lastRouteProgressKm = 0;
     const REROUTE_COOLDOWN = 15000;
     const REROUTE_GRACE_MS = 5000;
     const OFF_ROUTE_CONFIRMATION_UPDATES = 6;
     const ROUTE_DEVIATION_THRESHOLD_SQ = DEVIATION_THRESHOLD_SQ * 4;
+    const MANEUVER_PASSED_TOLERANCE_KM = 0.012;
 
     watch(() => activeSettings.value.themeColor, async (newColor) => {
         if (map.value && map.value.hasImage("destination-icon")) {
@@ -75,38 +92,146 @@ export const useRouteController = (
     function initWorkerData() { isWorkerReady.value = true; }
     function destroyWorker() { isWorkerReady.value = false; }
 
-    function projectPointToSegment(p: [number, number], v: [number, number], w: [number, number]): [number, number] {
+    function projectPointToSegmentWithRatio(p: [number, number], v: [number, number], w: [number, number]) {
         const l2 = getSquaredDist(v, w);
-        if (l2 === 0) return [v[0], v[1]];
+        if (l2 === 0) return { projected: [v[0], v[1]] as [number, number], t: 0 };
         let t = ((p[0] - v[0]) * (w[0] - v[0]) + (p[1] - v[1]) * (w[1] - v[1])) / l2;
         t = Math.max(0, Math.min(1, t));
-        return [v[0] + t * (w[0] - v[0]), v[1] + t * (w[1] - v[1])];
+        return {
+            projected: [v[0] + t * (w[0] - v[0]), v[1] + t * (w[1] - v[1])] as [number, number],
+            t,
+        };
     }
 
-    function appendUniquePoint(points: [number, number][], point: [number, number]) {
+    function appendDisplayPoint(points: [number, number][], kms: number[], point: [number, number], km: number) {
         const last = points[points.length - 1];
         if (!last || getSquaredDist(last, point) > 0.000000000001) {
             points.push(point);
+            kms.push(km);
+        } else if (kms.length > 0) {
+            kms[kms.length - 1] = Math.max(kms[kms.length - 1]!, km);
         }
     }
 
-    function getPlanarDistance(a: [number, number], b: [number, number]) {
-        const dx = (b[0] - a[0]) * 0.65;
-        const dy = b[1] - a[1];
-        return Math.sqrt(dx * dx + dy * dy);
+    function findMatchingPointIndex(
+        points: [number, number][],
+        target: [number, number],
+        startIndex: number,
+    ) {
+        for (let i = startIndex; i < points.length; i++) {
+            if (getSquaredDist(points[i]!, target) < 0.000000000001) {
+                return i;
+            }
+        }
+        return -1;
     }
 
-    function buildPathProgressCache(points: [number, number][]) {
+    function assignEdgeKmRange(
+        points: [number, number][],
+        cache: Float64Array,
+        assigned: boolean[],
+        startIndex: number,
+        endIndex: number,
+        startKm: number,
+        endKm: number,
+    ) {
+        const edgeKm = Math.max(0, endKm - startKm);
+        let totalMeters = 0;
+        const segmentMeters: number[] = [];
+
+        for (let i = startIndex; i < endIndex; i++) {
+            const meters = haversine(points[i]!, points[i + 1]!);
+            segmentMeters.push(meters);
+            totalMeters += meters;
+        }
+
+        let walkedMeters = 0;
+        for (let i = startIndex; i <= endIndex; i++) {
+            const ratio = totalMeters > 0 ? walkedMeters / totalMeters : 0;
+            cache[i] = startKm + edgeKm * ratio;
+            assigned[i] = true;
+            walkedMeters += segmentMeters[i - startIndex] ?? 0;
+        }
+    }
+
+    function buildResultPathKmCache(
+        points: [number, number][],
+        nodeSequence: number[],
+        nodeKms: number[],
+    ) {
         const cache = new Float64Array(points.length);
-        for (let i = 1; i < points.length; i++) {
-            cache[i] =
-                cache[i - 1]! + getPlanarDistance(points[i - 1]!, points[i]!);
+        const assigned = new Array<boolean>(points.length).fill(false);
+        let searchFrom = 0;
+
+        for (let i = 0; i < nodeSequence.length - 1; i++) {
+            const startCoord = nodeCoords.get(nodeSequence[i]!);
+            const endCoord = nodeCoords.get(nodeSequence[i + 1]!);
+            if (!startCoord || !endCoord) continue;
+
+            let startIndex = findMatchingPointIndex(points, startCoord, searchFrom);
+            if (startIndex < 0) startIndex = searchFrom;
+
+            let endIndex = findMatchingPointIndex(
+                points,
+                endCoord,
+                Math.min(startIndex + 1, points.length - 1),
+            );
+            if (endIndex < 0 || endIndex <= startIndex) {
+                endIndex = Math.min(points.length - 1, startIndex + 1);
+            }
+
+            assignEdgeKmRange(
+                points,
+                cache,
+                assigned,
+                startIndex,
+                endIndex,
+                nodeKms[i] ?? 0,
+                nodeKms[i + 1] ?? nodeKms[i] ?? 0,
+            );
+            searchFrom = endIndex;
         }
+
+        let lastKnownKm = 0;
+        for (let i = 0; i < cache.length; i++) {
+            if (assigned[i]) {
+                lastKnownKm = cache[i]!;
+            } else {
+                cache[i] = lastKnownKm;
+            }
+        }
+
         return cache;
     }
 
     function getRouteTotalKm(cache: Float32Array) {
         return cache.length >= 2 ? cache[cache.length - 2] || 0 : 0;
+    }
+
+    function getRouteTotalHours(cache: Float32Array) {
+        return cache.length >= 2 ? cache[cache.length - 1] || 0 : 0;
+    }
+
+    function getHoursAtKm(cache: Float32Array, targetKm: number) {
+        if (cache.length < 2) return 0;
+
+        for (let i = 2; i < cache.length; i += 2) {
+            const previousKm = cache[i - 2]!;
+            const previousHours = cache[i - 1]!;
+            const currentKm = cache[i]!;
+            const currentHours = cache[i + 1]!;
+
+            if (targetKm <= currentKm) {
+                const segmentKm = currentKm - previousKm;
+                const ratio =
+                    segmentKm > 0
+                        ? (targetKm - previousKm) / segmentKm
+                        : 0;
+                return previousHours + (currentHours - previousHours) * ratio;
+            }
+        }
+
+        return getRouteTotalHours(cache);
     }
 
     function getEffectiveSpeedKph(avgSpeed: number) {
@@ -120,6 +245,83 @@ export const useRouteController = (
         return h > 0 ? `${h}小时 ${m}分钟` : `${m}分钟`;
     }
 
+    function getStepCumulativeKm(step: DirectionStep, totalKm: number) {
+        return step.cumulativeKm ?? (step.type === "destination" ? totalKm : 0);
+    }
+
+    function getActionDistanceKm(avgSpeed: number, stepType?: DirectionStep["type"]) {
+        const speedKph = getEffectiveSpeedKph(avgSpeed);
+        const leadSeconds =
+            stepType === "exit-highway" ||
+            stepType === "slight-left" ||
+            stepType === "slight-right"
+                ? 5
+                : 4;
+        return Math.min(0.16, Math.max(0.045, (speedKph * leadSeconds) / 3600));
+    }
+
+    function formatGuidanceInstruction(step: DirectionStep | null, phase: GuidancePhase) {
+        if (!step) return "沿路线行驶";
+        if (step.type === "destination") {
+            return phase === "arrive" ? "到达目的地" : "继续前往目的地";
+        }
+        if (phase === "cruise") return "请直行";
+        if (phase === "prepare") return `准备${step.text}`;
+        if (step.text.startsWith("从") || step.text.startsWith("靠")) return step.text;
+        return `请${step.text}`;
+    }
+
+    function updateActiveGuidance(safeTraveledKm: number, totalKm: number, avgSpeed: number) {
+        const navigableSteps = fullRouteDirections.value.filter(
+            (step) => step.type !== "depart",
+        );
+        const currentIndex = navigableSteps.findIndex(
+            (step) =>
+                getStepCumulativeKm(step, totalKm) >
+                safeTraveledKm - MANEUVER_PASSED_TOLERANCE_KM,
+        );
+
+        if (currentIndex < 0) {
+            activeGuidance.value = {
+                current: null,
+                following: null,
+                distanceKm: Math.max(0, totalKm - safeTraveledKm),
+                phase: "cruise",
+                instruction: "沿路线行驶",
+            };
+            return activeGuidance.value;
+        }
+
+        const current = navigableSteps[currentIndex]!;
+        const following = navigableSteps[currentIndex + 1] ?? null;
+        const distanceKm = Math.max(
+            0,
+            getStepCumulativeKm(current, totalKm) - safeTraveledKm,
+        );
+        const actionDistanceKm = getActionDistanceKm(avgSpeed, current.type);
+        const prepareDistanceKm = Math.max(
+            actionDistanceKm * 2,
+            activeSettings.value.maneuverDistance,
+        );
+        const phase: GuidancePhase =
+            current.type === "destination" && distanceKm <= actionDistanceKm
+                ? "arrive"
+                : distanceKm <= actionDistanceKm
+                  ? "action"
+                  : distanceKm <= prepareDistanceKm
+                    ? "prepare"
+                    : "cruise";
+
+        activeGuidance.value = {
+            current,
+            following,
+            distanceKm,
+            phase,
+            instruction: formatGuidanceInstruction(current, phase),
+        };
+        return activeGuidance.value;
+    }
+
     function updateRouteSummary(traveledKm: number, avgSpeed: number) {
         const cache = routeStatsCache.value;
         if (!cache) return;
@@ -127,26 +329,28 @@ export const useRouteController = (
         const totalKm = getRouteTotalKm(cache);
         const safeTraveledKm = Math.min(Math.max(traveledKm, 0), totalKm);
         const remainingKm = Math.max(0, totalKm - safeTraveledKm);
-        const speedKph = getEffectiveSpeedKph(avgSpeed);
+        const totalHours = getRouteTotalHours(cache);
+        const elapsedHours = getHoursAtKm(cache, safeTraveledKm);
+        const fallbackHours =
+            remainingKm / getEffectiveSpeedKph(avgSpeed);
 
         routeDistance.value = remainingKm;
-        routeEta.value = formatDuration(remainingKm / speedKph);
+        routeEta.value = formatDuration(
+            totalHours > 0 ? Math.max(0, totalHours - elapsedHours) : fallbackHours,
+        );
 
-        const nextStep = fullRouteDirections.value.find((step) => {
-            if (step.type === "depart" || step.type === "destination") return false;
-            return (step.cumulativeKm ?? Infinity) > safeTraveledKm + 0.03;
-        });
-
-        nextTurnDistance.value = nextStep?.cumulativeKm
-            ? Math.max(0, nextStep.cumulativeKm - safeTraveledKm)
+        const guidance = updateActiveGuidance(safeTraveledKm, totalKm, avgSpeed);
+        nextTurnDistance.value = guidance?.current
+            ? guidance.distanceKm
             : remainingKm;
 
-        if (nextStep) {
+        if (guidance?.current) {
             processNavigationUpdate(
                 nextTurnDistance.value,
-                nextStep.id,
-                nextStep.text,
-                nextStep.type === "destination",
+                guidance.current.id,
+                guidance.current.text,
+                guidance.current.type === "destination",
+                avgSpeed,
             );
         }
     }
@@ -238,12 +442,13 @@ export const useRouteController = (
         });
     }
 
-    async function handleRouteClick(clickCoords: [number, number], truckCoords: [number, number], truckHeading: number, sdkScale: number, createEndMarker: boolean, avgSpeed: number) {
+    async function handleRouteClick(clickCoords: [number, number], truckCoords: [number, number], truckHeading: number, sdkScale: number, announcement: RouteAnnouncement, avgSpeed: number, destinationLabel?: string) {
         if (isCalculating.value || !isWorkerReady.value) return;
         isCalculating.value = true;
         isRouteActive.value = true;
         routeFound.value = null;
         savedDestination.value = clickCoords;
+        savedDestinationName.value = destinationLabel ?? null;
 
         try {
             const startConfig = findBestStartConfiguration(truckCoords, truckHeading, 50);
@@ -253,30 +458,50 @@ export const useRouteController = (
             const result = await findFlexibleRoute(startNodeId.value!, toRaw(clickCoords), truckHeading, toRaw(activeSettings.value.ownedDlcs));
 
             if (result) {
+                const resultPathKmCache = buildResultPathKmCache(
+                    result.path,
+                    result.node_sequence,
+                    result.node_kms,
+                );
                 const fullDisplayPath: [number, number][] = [];
-                appendUniquePoint(fullDisplayPath, truckCoords);
-                appendUniquePoint(fullDisplayPath, startConfig.projectedCoords);
-                for (const point of result.path) appendUniquePoint(fullDisplayPath, point);
+                const fullDisplayPathKms: number[] = [];
+                appendDisplayPoint(fullDisplayPath, fullDisplayPathKms, truckCoords, 0);
+                appendDisplayPoint(fullDisplayPath, fullDisplayPathKms, startConfig.projectedCoords, 0);
+                for (let i = 0; i < result.path.length; i++) {
+                    appendDisplayPoint(
+                        fullDisplayPath,
+                        fullDisplayPathKms,
+                        result.path[i]!,
+                        resultPathKmCache[i] ?? 0,
+                    );
+                }
 
                 currentRoutePath.value = Object.freeze(fullDisplayPath) as any;
-                routePathProgressCache.value = buildPathProgressCache(fullDisplayPath);
-                const stats = new Float32Array(result.node_kms.length * 2);
-                for(let i=0; i<result.node_kms.length; i++){
-                    stats[i*2] = result.node_kms[i];
-                    stats[i*2+1] = result.node_kms[i] / getEffectiveSpeedKph(avgSpeed);
+                routePathKmCache.value = new Float64Array(fullDisplayPathKms);
+                const nodeKms = Array.isArray(result.node_kms) ? result.node_kms : [];
+                const nodeHours = Array.isArray(result.node_hours) ? result.node_hours : null;
+                const stats = new Float32Array(nodeKms.length * 2);
+                for (let i = 0; i < nodeKms.length; i++) {
+                    const km = nodeKms[i] ?? 0;
+                    stats[i * 2] = km;
+                    stats[i * 2 + 1] = nodeHours?.[i] ?? km / getEffectiveSpeedKph(avgSpeed);
                 }
                 routeStatsCache.value = stats;
-                fullRouteDirections.value = generateDirectionsList(result.node_sequence, new Float32Array(result.node_kms), new Int8Array(result.sequence_maneuvers), new Int8Array(result.sequence_exits), nodeCoords);
-                destinationName.value = getGameLocationName(clickCoords[0], clickCoords[1]);
+                fullRouteDirections.value = generateDirectionsList(result.node_sequence, new Float32Array(nodeKms), new Int8Array(result.sequence_maneuvers), new Int8Array(result.sequence_exits), nodeCoords);
+                destinationName.value =
+                    savedDestinationName.value ||
+                    getGameLocationName(clickCoords[0], clickCoords[1]);
                 setMapLibreData(toRaw(map.value!), "route-line", "LineString", toRaw(fullDisplayPath));
-                if (createEndMarker) setMapLibreData(map.value!, "destination-source", "Point", toRaw(clickCoords));
+                setMapLibreData(map.value!, "destination-source", "Point", toRaw(clickCoords));
                 routeFound.value = true;
                 currentRouteIndex.value = 0;
+                lastRouteProgressKm = 0;
                 routeCalculatedAt = Date.now();
                 offRouteUpdates = 0;
                 updateRouteSummary(0, avgSpeed);
                 updateProfile("lastDestination", savedDestination.value);
-                if (createEndMarker) announceStart(); else announceReroute();
+                if (announcement === "start") announceStart();
+                else if (announcement === "reroute") announceReroute();
             } else {
                 routeFound.value = false;
                 isRouteActive.value = false;
@@ -291,9 +516,9 @@ export const useRouteController = (
     }
 
     const updateRouteProgress = (truckCoords: [number, number], truckHeading: number, sdkScale: number, avgSpeed: number) => {
-        if (!currentRoutePath.value || currentRoutePath.value.length < 2 || !routeStatsCache.value) return;
+        if (!currentRoutePath.value || currentRoutePath.value.length < 2 || !routeStatsCache.value || !routePathKmCache.value) return;
         const path = currentRoutePath.value;
-        const cache = routeStatsCache.value;
+        const kmCache = routePathKmCache.value;
         let bestIndex = currentRouteIndex.value;
         let minSqDist = Infinity;
         const searchLimit = Math.min(path.length - 1, bestIndex + 300);
@@ -305,24 +530,30 @@ export const useRouteController = (
         }
         currentRouteIndex.value = bestIndex;
 
-        const p1 = path[bestIndex]!; const p2 = path[bestIndex + 1]!;
-        let projectedDistanceOnPath = routePathProgressCache.value?.[bestIndex] ?? 0;
+        const p1 = path[bestIndex]!;
+        const p2 = path[bestIndex + 1]!;
         if (p1 && p2) {
-            const slicedStartPoint = projectPointToSegment(truckCoords, p1, p2);
-            projectedDistanceOnPath += getPlanarDistance(p1, slicedStartPoint);
-            const remainingCoords = [truckCoords, slicedStartPoint, ...path.slice(bestIndex + 1)];
+            const { projected, t } = projectPointToSegmentWithRatio(
+                truckCoords,
+                p1,
+                p2,
+            );
+            const segmentStartKm = kmCache[bestIndex] ?? 0;
+            const segmentEndKm = kmCache[bestIndex + 1] ?? segmentStartKm;
+            const progressKm =
+                segmentStartKm +
+                Math.max(0, segmentEndKm - segmentStartKm) * t;
+            lastRouteProgressKm = Math.max(lastRouteProgressKm, progressKm);
+
+            const remainingCoords = [
+                truckCoords,
+                projected,
+                ...path.slice(bestIndex + 1),
+            ];
             setMapLibreData(toRaw(map.value!), "route-line", "LineString", toRaw(remainingCoords));
         }
 
-        const totalPathDistance =
-            routePathProgressCache.value?.[routePathProgressCache.value.length - 1] ??
-            0;
-        const progressPercent =
-            totalPathDistance > 0
-                ? projectedDistanceOnPath / totalPathDistance
-                : bestIndex / Math.max(1, path.length - 1);
-        const traveledKm = getRouteTotalKm(cache) * progressPercent;
-        updateRouteSummary(traveledKm, avgSpeed);
+        updateRouteSummary(lastRouteProgressKm, avgSpeed);
 
         const now = Date.now();
         const isOffRoute = minSqDist > ROUTE_DEVIATION_THRESHOLD_SQ;
@@ -340,7 +571,7 @@ export const useRouteController = (
             isHandlingDeviation.value = true;
             lastRerouteTime = now;
             offRouteUpdates = 0;
-            handleRouteClick(toRaw(savedDestination.value), truckCoords, truckHeading, sdkScale, false, avgSpeed);
+            handleRouteClick(toRaw(savedDestination.value), truckCoords, truckHeading, sdkScale, "reroute", avgSpeed, savedDestinationName.value ?? undefined);
         }
     };
 
@@ -351,13 +582,16 @@ export const useRouteController = (
         isRouteActive.value = false;
         currentRoutePath.value = null;
         savedDestination.value = null;
+        savedDestinationName.value = null;
         fullRouteDirections.value = [];
         routeStatsCache.value = null;
-        routePathProgressCache.value = null;
+        routePathKmCache.value = null;
         routeDistance.value = 0;
         routeEta.value = "";
         nextTurnDistance.value = 0;
+        activeGuidance.value = null;
         offRouteUpdates = 0;
+        lastRouteProgressKm = 0;
         updateProfile("lastDestination", null);
         stopNavigationMode();
         resetVoiceState();
@@ -416,7 +650,7 @@ export const useRouteController = (
     return {
         destinationName, routeDistance, routeEta, isCalculating, routeFound,
         currentRoutePath, isWorkerReady, isRouteActive, fullRouteDirections,
-        nextTurnDistance, initWorkerData, destroyWorker, setupRouteLayer,
+        nextTurnDistance, activeGuidance, initWorkerData, destroyWorker, setupRouteLayer,
         handleRouteClick, updateRouteProgress, clearRouteState,
     };
 };

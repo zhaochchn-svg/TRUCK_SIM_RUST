@@ -9,6 +9,7 @@ import maplibregl from "maplibre-gl";
 import { usePlatform } from "~/composables/Platform";
 import { blendWithBg, lightenColor } from "~/assets/utils/shared/colors";
 import { generateTruckIcon } from "~/assets/utils/map/markers";
+import type { PoiSearchResult } from "~/composables/CityData";
 
 defineProps<{ goHome: () => void }>();
 
@@ -24,6 +25,7 @@ const { activeSettings, settings, updateGlobal } = useSettings();
 const mapEl = shallowRef<HTMLElement | null>(null);
 const map = shallowRef<maplibregl.Map | null>(null);
 const isSettingsPanelOpened = ref(false);
+const isPoiSearchOpened = ref(false);
 
 // 点击设置目的地使能状态
 const isClickingEnabled = ref(settings.value.isClickingEnabled);
@@ -79,6 +81,7 @@ const { loadLocationData, findDestinationCoords } = useCityData();
 // 平台检查
 const { isElectron, isMobile, isWeb } = usePlatform();
 const { announceOverSpeed } = useVoiceNavigation();
+const { requestWakeLock } = useWakeLock();
 
 // 路网系统
 const { loading, progress, adjacency, nodeCoords, initializeGraphData } =
@@ -114,8 +117,7 @@ const {
     destroyWorker,
     isRouteActive,
     routeFound,
-    fullRouteDirections,
-    nextTurnDistance,
+    activeGuidance,
 } = useRouteController(map, adjacency, nodeCoords, stopNavigationMode);
 
 let uiTimer: ReturnType<typeof setTimeout> | null = null;
@@ -238,7 +240,7 @@ watch(
                     truckCoords.value,
                     truckHeading.value,
                     activeRouteScale.value,
-                    false,
+                    "start",
                     activeAverageSpeed.value,
                 );
             }
@@ -285,7 +287,7 @@ watch(
                 currentCoords,
                 truckHeading.value,
                 activeRouteScale.value,
-                true,
+                "start",
                 activeAverageSpeed.value,
             );
         }
@@ -355,7 +357,7 @@ onMounted(async () => {
                 activeTruckCoords.value,
                 activeTruckHeading.value,
                 activeRouteScale.value,
-                true,
+                "start",
                 activeAverageSpeed.value,
             );
 
@@ -424,6 +426,7 @@ function onTelemetryUpdate() {
  */
 function onStartNavigation() {
     if (!activeTruckCoords.value) return;
+    void requestWakeLock();
     startNavigationMode(activeTruckCoords.value, activeTruckHeading.value);
     isSheetHidden.value = true;
 }
@@ -435,6 +438,36 @@ function onSheetClosed() {
 function toggleEnableClicking() {
     isClickingEnabled.value = !isClickingEnabled.value;
     clickingNotificationTrigger.value++;
+}
+
+function togglePoiSearchPanel() {
+    isPoiSearchOpened.value = !isPoiSearchOpened.value;
+}
+
+async function onPoiSearchSelect(result: PoiSearchResult) {
+    isPoiSearchOpened.value = false;
+
+    map.value?.flyTo({
+        center: result.coordinates,
+        zoom: Math.max(map.value.getZoom(), 10.5),
+        curve: 1,
+        duration: 650,
+    });
+
+    if (!activeTruckCoords.value) return;
+
+    clearRouteState();
+    disableClicking();
+
+    await handleRouteClick(
+        result.coordinates,
+        activeTruckCoords.value,
+        activeTruckHeading.value,
+        activeRouteScale.value,
+        "start",
+        activeAverageSpeed.value,
+        result.subtitle ? `${result.label}|${result.subtitle}` : result.label,
+    );
 }
 
 const onResetNorth = () => {
@@ -483,6 +516,7 @@ const onToggleFullscreen = async () => {
 
     try {
         if (!document.fullscreenElement) {
+            void requestWakeLock();
             await target.requestFullscreen();
         } else if (document.exitFullscreen) {
             await document.exitFullscreen();
@@ -504,6 +538,9 @@ const onCancelRoute = () => {
 
 const toggleSettingsPanel = () => {
     isSettingsPanelOpened.value = !isSettingsPanelOpened.value;
+    if (isSettingsPanelOpened.value) {
+        isPoiSearchOpened.value = false;
+    }
 };
 </script>
 
@@ -543,19 +580,30 @@ const toggleSettingsPanel = () => {
                         <HudButton :onClick="toggleSettingsPanel">
                             <Icon name="lucide:settings" class="icon" />
                         </HudButton>
+
+                        <HudButton
+                            :class="{ 'green-icon': isPoiSearchOpened }"
+                            :onClick="togglePoiSearchPanel"
+                        >
+                            <Icon name="lucide:search" class="icon" />
+                        </HudButton>
                     </div>
 
+                    <PoiSearchPanel
+                        :is-open="isPoiSearchOpened"
+                        @close="isPoiSearchOpened = false"
+                        @select="onPoiSearchSelect"
+                    />
+
                     <div v-if="!gameConnected" class="offline-badge">
-                        <Icon name="lucide:plug-zap-off" class="offline-badge-icon" />
+                        <Icon name="lucide:unplug" class="offline-badge-icon" />
                         <span>Game Offline</span>
                     </div>
 
                     <!-- 导航步骤卡片 -->
                     <ManeuverCard
-                        v-show="isNavigating && activeSettings.hasTurnNavigation"
-                        :upcoming-turns="fullRouteDirections"
-                        :distance-to-next-turn="nextTurnDistance"
-                        :next-instruction="fullRouteDirections[1]?.text || '继续沿路行驶'"
+                        v-show="isNavigating && activeSettings.hasTurnNavigation && activeGuidance"
+                        :guidance="activeGuidance"
                     />
 
                     <!-- 通用通知 -->
