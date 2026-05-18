@@ -158,6 +158,7 @@ export interface SpecialEvents {
  * GAMEPLAY EVENTS DATA CATEGORY (Detailed event data)
  */
 export interface GamePlayEvents {
+    eventSerial?: number;
     ferryData: TransportEvent;
     finedData: FinedEvent;
     jobCancelledPenalty: number;

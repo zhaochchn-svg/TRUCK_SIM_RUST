@@ -5,6 +5,18 @@ export interface TelemetryUpdate {
     job: JobState;
 }
 
+export type TelemetryEventCategory = "finance" | "logistics";
+
+export interface TelemetryEventNotification {
+    id: string;
+    key: string;
+    category: TelemetryEventCategory;
+    title: string;
+    detail: string;
+    icon: string;
+    createdAt: number;
+}
+
 export interface GameState {
     gameTime: string;
     gameConnected: boolean;

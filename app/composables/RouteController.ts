@@ -66,21 +66,11 @@ export const useRouteController = (
     const fullRouteDirections = ref<DirectionStep[]>([]);
     const nextTurnDistance = ref<number>(0);
     const activeGuidance = shallowRef<ActiveRouteGuidance | null>(null);
+    const isTruckInYard = ref(false);
+    const lastRecalcTime = ref(0);
 
-    const isHandlingDeviation = ref(false);
-    let lastRerouteTime = 0;
-    let routeCalculatedAt = 0;
-    let offRouteUpdates = 0;
     let lastRouteProgressKm = 0;
-    const REROUTE_COOLDOWN = 15000;
-    const REROUTE_GRACE_MS = 5000;
-    const OFF_ROUTE_CONFIRMATION_UPDATES = 6;
-    const ROUTE_DEVIATION_THRESHOLD_SQ = DEVIATION_THRESHOLD_SQ * 4;
     const MANEUVER_PASSED_TOLERANCE_KM = 0.012;
-    const PROGRESS_BACKTRACK_TOLERANCE_KM = 0.02;
-    const PROGRESS_LOOKAHEAD_TOLERANCE_KM = 0.35;
-    const ROUTE_SEGMENT_STICKINESS_SQ = ROUTE_DEVIATION_THRESHOLD_SQ * 0.08;
-    const ROUTE_HEADING_PENALTY_SQ = ROUTE_DEVIATION_THRESHOLD_SQ * 0.12;
     const ARRIVAL_AUTO_STOP_DELAY_MS = 10_000;
     const ARRIVAL_AUTO_STOP_DISTANCE_KM = 0.05;
     let arrivalAutoStopTimer: ReturnType<typeof setTimeout> | null = null;
@@ -123,49 +113,6 @@ export const useRouteController = (
             segmentStartKm +
             Math.max(0, segmentEndKm - segmentStartKm) * t
         );
-    }
-
-    function scoreRouteSegmentCandidate(
-        path: readonly [number, number][],
-        kmCache: Float64Array,
-        segmentIndex: number,
-        truckCoords: [number, number],
-        truckHeading: number,
-        currentIndex: number,
-    ) {
-        const p1 = path[segmentIndex]!;
-        const p2 = path[segmentIndex + 1]!;
-        const distSq = getSqDistToSegment(truckCoords, p1, p2);
-        const { t } = projectPointToSegmentWithRatio(truckCoords, p1, p2);
-        const progressKm = getProgressForSegment(kmCache, segmentIndex, t);
-
-        const backtrackKm = Math.max(
-            0,
-            lastRouteProgressKm - progressKm - PROGRESS_BACKTRACK_TOLERANCE_KM,
-        );
-        const lookaheadKm = Math.max(
-            0,
-            progressKm - lastRouteProgressKm - PROGRESS_LOOKAHEAD_TOLERANCE_KM,
-        );
-        const progressPenaltySq =
-            (backtrackKm * backtrackKm + lookaheadKm * lookaheadKm) *
-            ROUTE_DEVIATION_THRESHOLD_SQ *
-            80;
-
-        const segmentHeading = getBearing(p1, p2);
-        const headingPenaltySq =
-            Math.pow(getAngleDiff(truckHeading, segmentHeading) / 180, 2) *
-            ROUTE_HEADING_PENALTY_SQ;
-        const indexPenaltySq =
-            Math.min(Math.abs(segmentIndex - currentIndex), 12) *
-            ROUTE_SEGMENT_STICKINESS_SQ;
-
-        return {
-            index: segmentIndex,
-            distSq,
-            progressKm,
-            score: distSq + headingPenaltySq + indexPenaltySq + progressPenaltySq,
-        };
     }
 
     function cancelArrivalAutoStop() {
@@ -330,6 +277,14 @@ export const useRouteController = (
         return step.cumulativeKm ?? (step.type === "destination" ? totalKm : 0);
     }
 
+    function getStepPassKm(step: DirectionStep, totalKm: number) {
+        return (
+            step.exitCumulativeKm ??
+            step.cumulativeKm ??
+            (step.type === "destination" ? totalKm : 0)
+        );
+    }
+
     function getActionDistanceKm(avgSpeed: number, stepType?: DirectionStep["type"]) {
         const speedKph = getEffectiveSpeedKph(avgSpeed);
         const leadSeconds =
@@ -358,7 +313,7 @@ export const useRouteController = (
         );
         const currentIndex = navigableSteps.findIndex(
             (step) =>
-                getStepCumulativeKm(step, totalKm) >
+                getStepPassKm(step, totalKm) >
                 safeTraveledKm - MANEUVER_PASSED_TOLERANCE_KM,
         );
 
@@ -546,6 +501,7 @@ export const useRouteController = (
         try {
             const startConfig = findBestStartConfiguration(truckCoords, truckHeading, 50);
             if (!startConfig) { routeFound.value = false; isRouteActive.value = false; return; }
+            isYardStart.value = startConfig.type === "yard";
             startNodeId.value = startConfig.toId;
 
             const result = await findFlexibleRoute(startNodeId.value!, toRaw(clickCoords), truckHeading, toRaw(activeSettings.value.ownedDlcs));
@@ -589,8 +545,6 @@ export const useRouteController = (
                 routeFound.value = true;
                 currentRouteIndex.value = 0;
                 lastRouteProgressKm = 0;
-                routeCalculatedAt = Date.now();
-                offRouteUpdates = 0;
                 updateRouteSummary(0, avgSpeed);
                 updateProfile("lastDestination", savedDestination.value);
                 if (announcement === "start") announceStart();
@@ -604,7 +558,6 @@ export const useRouteController = (
             isRouteActive.value = false;
         } finally {
             isCalculating.value = false;
-            isHandlingDeviation.value = false;
         }
     }
 
@@ -612,55 +565,41 @@ export const useRouteController = (
         if (!currentRoutePath.value || currentRoutePath.value.length < 2 || !routeStatsCache.value || !routePathKmCache.value) return;
         const path = currentRoutePath.value;
         const kmCache = routePathKmCache.value;
-        const previousIndex = currentRouteIndex.value;
-        let bestCandidate: ReturnType<typeof scoreRouteSegmentCandidate> | null = null;
-        let bestProgressCandidate: ReturnType<typeof scoreRouteSegmentCandidate> | null = null;
-        let bestForwardCandidate: ReturnType<typeof scoreRouteSegmentCandidate> | null = null;
+
+        if (lastMathPos.value) {
+            const sqDist = getSquaredDist(lastMathPos.value, truckCoords);
+            if (sqDist < 0.000000001) return;
+        }
+        lastMathPos.value = truckCoords;
+
+        let bestIndex = currentRouteIndex.value;
         let minSqDist = Infinity;
-        const searchLimit = Math.min(path.length - 1, previousIndex + 300);
-        const startSearch = Math.max(0, previousIndex - 30);
-        const minimumProgressKm = Math.max(
-            0,
-            lastRouteProgressKm - PROGRESS_BACKTRACK_TOLERANCE_KM,
-        );
-        const maximumProgressKm = lastRouteProgressKm + PROGRESS_LOOKAHEAD_TOLERANCE_KM;
+
+        const searchLimit = Math.min(path.length - 1, bestIndex + 500);
+        const startSearch = Math.max(0, bestIndex - 5);
 
         for (let i = startSearch; i < searchLimit; i++) {
-            const candidate = scoreRouteSegmentCandidate(
-                path,
-                kmCache,
-                i,
+            const distSq = getSqDistToSegment(
                 truckCoords,
-                truckHeading,
-                previousIndex,
+                path[i]!,
+                path[i + 1]!,
             );
-            minSqDist = Math.min(minSqDist, candidate.distSq);
-            if (!bestCandidate || candidate.score < bestCandidate.score) {
-                bestCandidate = candidate;
-            }
-            if (
-                candidate.progressKm >= minimumProgressKm &&
-                candidate.progressKm <= maximumProgressKm &&
-                (!bestProgressCandidate || candidate.score < bestProgressCandidate.score)
-            ) {
-                bestProgressCandidate = candidate;
-            }
-            if (
-                candidate.progressKm >= minimumProgressKm &&
-                (!bestForwardCandidate || candidate.score < bestForwardCandidate.score)
-            ) {
-                bestForwardCandidate = candidate;
+
+            if (distSq < minSqDist) {
+                minSqDist = distSq;
+                bestIndex = i;
             }
         }
-        if (!bestCandidate) return;
 
-        const selectedCandidate =
-            bestProgressCandidate ?? bestForwardCandidate ?? bestCandidate;
-        const bestIndex = Math.max(
-            previousIndex,
-            selectedCandidate.index,
-        );
         currentRouteIndex.value = bestIndex;
+
+        let activeThreshold = DEVIATION_THRESHOLD_SQ;
+
+        const distToEndSq = getSquaredDist(truckCoords, path[path.length - 1]!);
+        if (distToEndSq < 0.00005) {
+            clearRouteState();
+            return;
+        }
 
         const p1 = path[bestIndex]!;
         const p2 = path[bestIndex + 1]!;
@@ -687,22 +626,25 @@ export const useRouteController = (
         updateRouteSummary(lastRouteProgressKm, avgSpeed);
 
         const now = Date.now();
-        const isOffRoute = minSqDist > ROUTE_DEVIATION_THRESHOLD_SQ;
-        offRouteUpdates = isOffRoute ? offRouteUpdates + 1 : 0;
+        if (now - lastRecalcTime.value < 5000) return;
 
-        if (
-            isOffRoute &&
-            offRouteUpdates >= OFF_ROUTE_CONFIRMATION_UPDATES &&
-            now - routeCalculatedAt > REROUTE_GRACE_MS &&
-            !isHandlingDeviation.value &&
-            !isCalculating.value &&
-            savedDestination.value &&
-            now - lastRerouteTime > REROUTE_COOLDOWN
-        ) {
-            isHandlingDeviation.value = true;
-            lastRerouteTime = now;
-            offRouteUpdates = 0;
-            handleRouteClick(toRaw(savedDestination.value), truckCoords, truckHeading, sdkScale, "reroute", avgSpeed, savedDestinationName.value ?? undefined);
+        if (isTruckInYard.value) {
+            activeThreshold = 0.05;
+        } else if (isYardStart.value) {
+            if (bestIndex > 0) {
+                isYardStart.value = false;
+            } else {
+                activeThreshold = 0.005;
+            }
+        }
+
+        if (minSqDist > activeThreshold) {
+            if (!isCalculating.value && savedDestination.value) {
+                lastRecalcTime.value = now;
+                console.log("Deviation detected! Recalculating...");
+                handleRouteClick(toRaw(savedDestination.value), truckCoords, truckHeading, sdkScale, "reroute", avgSpeed, savedDestinationName.value ?? undefined);
+                return;
+            }
         }
     };
 
@@ -715,6 +657,7 @@ export const useRouteController = (
         currentRoutePath.value = null;
         savedDestination.value = null;
         savedDestinationName.value = null;
+        isYardStart.value = false;
         fullRouteDirections.value = [];
         routeStatsCache.value = null;
         routePathKmCache.value = null;
@@ -722,27 +665,69 @@ export const useRouteController = (
         routeEta.value = "";
         nextTurnDistance.value = 0;
         activeGuidance.value = null;
-        offRouteUpdates = 0;
         lastRouteProgressKm = 0;
+        lastMathPos.value = null;
+        isTruckInYard.value = false;
+        lastRecalcTime.value = 0;
         updateProfile("lastDestination", null);
         stopNavigationMode();
         resetVoiceState();
-        isHandlingDeviation.value = false;
     }
 
     function findBestStartConfiguration(truckCoords: [number, number], _truckHeading: number, searchLimit: number = 50) {
-        if (nodeCoords.size === 0) return null;
-        const headingCandidates = getClosestDestinationNodes(
-            truckCoords,
-            _truckHeading,
-            8,
-        );
-        if (headingCandidates.length > 0) {
-            const nodePos = nodeCoords.get(headingCandidates[0]!);
-            if (nodePos) {
-                return { type: "road", fromId: headingCandidates[0]!, toId: headingCandidates[0]!, projectedCoords: nodePos };
+        if (adjacency.size === 0 || nodeCoords.size === 0) return null;
+
+        const nearbyNodes = getClosestNodes(truckCoords, searchLimit, 0.1);
+        let bestEdge: {
+            type: "road";
+            fromId: number;
+            toId: number;
+            projectedCoords: [number, number];
+            bearing: number;
+        } | null = null;
+        let minScore = Infinity;
+
+        for (const fromNodeId of nearbyNodes) {
+            const neighbors = adjacency.get(fromNodeId);
+            const fromPos = nodeCoords.get(fromNodeId);
+            if (!neighbors || !fromPos) continue;
+
+            for (const edge of neighbors) {
+                const toPos = nodeCoords.get(edge.to);
+                if (!toPos) continue;
+
+                const roadBearing = getBearing(fromPos, toPos);
+                const headingDiff = getAngleDiff(_truckHeading, roadBearing);
+                const isOpposite = headingDiff > 90;
+                const trueDiff = isOpposite ? 180 - headingDiff : headingDiff;
+                if (trueDiff > 50) continue;
+
+                const projected = projectPointToSegmentWithRatio(
+                    truckCoords,
+                    fromPos,
+                    toPos,
+                ).projected;
+                const distanceKm = haversine(truckCoords, projected) / 1000;
+                const headingPenalty = Math.pow(trueDiff / 90, 2) * 0.12;
+                const directionPenalty = isOpposite ? 0.5 : 0;
+                const score = distanceKm + headingPenalty + directionPenalty;
+
+                if (score < minScore) {
+                    minScore = score;
+                    bestEdge = {
+                        type: "road",
+                        fromId: fromNodeId,
+                        toId: edge.to,
+                        projectedCoords: projected,
+                        bearing: isOpposite
+                            ? (roadBearing + 180) % 360
+                            : roadBearing,
+                    };
+                }
             }
         }
+
+        if (bestEdge) return bestEdge;
 
         const candidates = getClosestNodes(truckCoords, 10, searchLimit / 111);
         let closestNodeId: number | null = null; let minNodeDist = Infinity;
@@ -763,7 +748,7 @@ export const useRouteController = (
     async function findFlexibleRoute(startNodeId: number, targetCoords: [number, number], truckHeading: number, ownedDlcs: number[]) {
         const snappedCandidates = getClosestDestinationNodes(
             targetCoords,
-            truckHeading,
+            null,
             24,
         );
         const candidateCounts = [2, 4, 8, 12, 16, 24];

@@ -15,6 +15,7 @@
 #include "amtrucks/scssdk_telemetry_ats.h"
 #include "common/scssdk_telemetry_common_channels.h"
 #include "common/scssdk_telemetry_common_configs.h"
+#include "common/scssdk_telemetry_common_gameplay_events.h"
 #include "common/scssdk_telemetry_trailer_common_channels.h"
 #include "common/scssdk_telemetry_truck_common_channels.h"
 #include "eurotrucks2/scssdk_eut2.h"
@@ -55,6 +56,43 @@ struct JobConfig {
     std::string source_company;
     scs_u64_t income = 0;
     scs_u32_t delivery_time = 0;
+};
+
+struct TransportEventState {
+    scs_s64_t pay_amount = 0;
+    std::string source_name;
+    std::string target_name;
+};
+
+struct FinedEventState {
+    scs_s64_t pay_amount = 0;
+    std::string offence;
+};
+
+struct DeliveredEventState {
+    bool auto_loaded = false;
+    bool auto_parked = false;
+    float cargo_damage = 0.0f;
+    scs_u32_t delivery_time = 0;
+    float distance_km = 0.0f;
+    scs_s32_t earned_xp = 0;
+    scs_s64_t revenue = 0;
+};
+
+struct GameplayEventState {
+    scs_u64_t serial = 0;
+    bool job_cancelled = false;
+    bool job_delivered = false;
+    bool fined = false;
+    bool tollgate = false;
+    bool ferry = false;
+    bool train = false;
+    scs_s64_t job_cancelled_penalty = 0;
+    scs_s64_t tollgate_payment = 0;
+    TransportEventState ferry_data;
+    TransportEventState train_data;
+    FinedEventState fined_data;
+    DeliveredEventState job_delivered_data;
 };
 
 struct TrailerState {
@@ -100,6 +138,7 @@ struct TelemetryState {
 
     TrailerState trailer;
     JobConfig job;
+    GameplayEventState gameplay;
 };
 
 TelemetryState telemetry;
@@ -297,24 +336,63 @@ std::string build_payload() {
          << mps_to_mph(telemetry.navigation_speed_limit);
     json << "},";
 
+    const auto &gameplay = telemetry.gameplay;
+
     json << "\"specialEvents\":{";
     json << "\"onJob\":" << (telemetry.job.active ? "true" : "false")
          << ",";
-    json << "\"jobCancelled\":false,";
-    json << "\"jobDelivered\":false,";
-    json << "\"fined\":false,";
-    json << "\"tollgate\":false,";
-    json << "\"ferry\":false,";
-    json << "\"train\":false";
+    json << "\"jobCancelled\":"
+         << (gameplay.job_cancelled ? "true" : "false") << ",";
+    json << "\"jobDelivered\":"
+         << (gameplay.job_delivered ? "true" : "false") << ",";
+    json << "\"fined\":" << (gameplay.fined ? "true" : "false") << ",";
+    json << "\"tollgate\":" << (gameplay.tollgate ? "true" : "false")
+         << ",";
+    json << "\"ferry\":" << (gameplay.ferry ? "true" : "false") << ",";
+    json << "\"train\":" << (gameplay.train ? "true" : "false");
     json << "},";
 
     json << "\"gamePlayEvents\":{";
-    json << "\"ferryData\":{\"payAmount\":0,\"sourceName\":\"\",\"targetName\":\"\"},";
-    json << "\"finedData\":{\"payAmount\":0,\"offence\":\"\"},";
-    json << "\"jobCancelledPenalty\":0,";
-    json << "\"jobDelivered\":{\"autoLoaded\":false,\"autoParker\":false,\"cargoDamage\":0,\"deliveryTime\":\"1970-01-01T00:00:00Z\",\"distanceKm\":0,\"earnedXp\":0,\"revenue\":0},";
-    json << "\"tollgatePayment\":0,";
-    json << "\"trainData\":{\"payAmount\":0,\"sourceName\":\"\",\"targetName\":\"\"}";
+    json << "\"eventSerial\":" << gameplay.serial << ",";
+    json << "\"ferryData\":{";
+    json << "\"payAmount\":" << gameplay.ferry_data.pay_amount << ",";
+    json << "\"sourceName\":\""
+         << escape_json(gameplay.ferry_data.source_name) << "\",";
+    json << "\"targetName\":\""
+         << escape_json(gameplay.ferry_data.target_name) << "\"";
+    json << "},";
+    json << "\"finedData\":{";
+    json << "\"payAmount\":" << gameplay.fined_data.pay_amount << ",";
+    json << "\"offence\":\"" << escape_json(gameplay.fined_data.offence)
+         << "\"";
+    json << "},";
+    json << "\"jobCancelledPenalty\":"
+         << gameplay.job_cancelled_penalty << ",";
+    json << "\"jobDelivered\":{";
+    json << "\"autoLoaded\":"
+         << (gameplay.job_delivered_data.auto_loaded ? "true" : "false")
+         << ",";
+    json << "\"autoParker\":"
+         << (gameplay.job_delivered_data.auto_parked ? "true" : "false")
+         << ",";
+    json << "\"cargoDamage\":"
+         << gameplay.job_delivered_data.cargo_damage << ",";
+    json << "\"deliveryTime\":\""
+         << escape_json(iso_from_game_minutes(gameplay.job_delivered_data.delivery_time))
+         << "\",";
+    json << "\"distanceKm\":" << gameplay.job_delivered_data.distance_km
+         << ",";
+    json << "\"earnedXp\":" << gameplay.job_delivered_data.earned_xp << ",";
+    json << "\"revenue\":" << gameplay.job_delivered_data.revenue;
+    json << "},";
+    json << "\"tollgatePayment\":" << gameplay.tollgate_payment << ",";
+    json << "\"trainData\":{";
+    json << "\"payAmount\":" << gameplay.train_data.pay_amount << ",";
+    json << "\"sourceName\":\""
+         << escape_json(gameplay.train_data.source_name) << "\",";
+    json << "\"targetName\":\""
+         << escape_json(gameplay.train_data.target_name) << "\"";
+    json << "}";
     json << "}";
     json << "}";
 
@@ -367,12 +445,12 @@ void send_payload(const bool force = false) {
     last_send = now;
 }
 
-const scs_named_value_t *find_attribute(
-    const scs_telemetry_configuration_t &configuration,
+const scs_named_value_t *find_named_value(
+    const scs_named_value_t *attributes,
     const char *name,
     const scs_value_type_t type
 ) {
-    for (const scs_named_value_t *current = configuration.attributes;
+    for (const scs_named_value_t *current = attributes;
          current && current->name;
          ++current) {
         if (current->index != SCS_U32_NIL) continue;
@@ -381,6 +459,14 @@ const scs_named_value_t *find_attribute(
         return nullptr;
     }
     return nullptr;
+}
+
+const scs_named_value_t *find_attribute(
+    const scs_telemetry_configuration_t &configuration,
+    const char *name,
+    const scs_value_type_t type
+) {
+    return find_named_value(configuration.attributes, name, type);
 }
 
 std::string get_string_attribute(
@@ -427,6 +513,76 @@ scs_u64_t get_u64_attribute(
     const scs_named_value_t *attribute =
         find_attribute(configuration, name, SCS_VALUE_TYPE_u64);
     return attribute ? attribute->value.value_u64.value : 0;
+}
+
+std::string get_string_named_value(
+    const scs_named_value_t *attributes,
+    const char *name
+) {
+    const scs_named_value_t *attribute =
+        find_named_value(attributes, name, SCS_VALUE_TYPE_string);
+    if (!attribute || !attribute->value.value_string.value) return "";
+    return attribute->value.value_string.value;
+}
+
+float get_float_named_value(
+    const scs_named_value_t *attributes,
+    const char *name
+) {
+    const scs_named_value_t *attribute =
+        find_named_value(attributes, name, SCS_VALUE_TYPE_float);
+    return attribute ? attribute->value.value_float.value : 0.0f;
+}
+
+bool get_bool_named_value(
+    const scs_named_value_t *attributes,
+    const char *name
+) {
+    const scs_named_value_t *attribute =
+        find_named_value(attributes, name, SCS_VALUE_TYPE_bool);
+    return attribute ? attribute->value.value_bool.value : false;
+}
+
+scs_s32_t get_s32_named_value(
+    const scs_named_value_t *attributes,
+    const char *name
+) {
+    const scs_named_value_t *attribute =
+        find_named_value(attributes, name, SCS_VALUE_TYPE_s32);
+    return attribute ? attribute->value.value_s32.value : 0;
+}
+
+scs_u32_t get_u32_named_value(
+    const scs_named_value_t *attributes,
+    const char *name
+) {
+    const scs_named_value_t *attribute =
+        find_named_value(attributes, name, SCS_VALUE_TYPE_u32);
+    return attribute ? attribute->value.value_u32.value : 0;
+}
+
+scs_s64_t get_s64_named_value(
+    const scs_named_value_t *attributes,
+    const char *name
+) {
+    const scs_named_value_t *attribute =
+        find_named_value(attributes, name, SCS_VALUE_TYPE_s64);
+    return attribute ? attribute->value.value_s64.value : 0;
+}
+
+void clear_gameplay_event_details(GameplayEventState &gameplay) {
+    gameplay.job_cancelled = false;
+    gameplay.job_delivered = false;
+    gameplay.fined = false;
+    gameplay.tollgate = false;
+    gameplay.ferry = false;
+    gameplay.train = false;
+    gameplay.job_cancelled_penalty = 0;
+    gameplay.tollgate_payment = 0;
+    gameplay.ferry_data = TransportEventState {};
+    gameplay.train_data = TransportEventState {};
+    gameplay.fined_data = FinedEventState {};
+    gameplay.job_delivered_data = DeliveredEventState {};
 }
 
 SCSAPI_VOID telemetry_frame_end(
@@ -502,6 +658,111 @@ SCSAPI_VOID telemetry_configuration(
     }
 
     send_payload(true);
+}
+
+SCSAPI_VOID telemetry_gameplay_event(
+    const scs_event_t,
+    const void *event_info,
+    const scs_context_t
+) {
+    const auto *info =
+        static_cast<const scs_telemetry_gameplay_event_t *>(event_info);
+    if (!info || !info->id) return;
+
+    const std::string event_id(info->id);
+    auto &gameplay = telemetry.gameplay;
+    clear_gameplay_event_details(gameplay);
+
+    bool handled = true;
+    if (event_id == SCS_TELEMETRY_GAMEPLAY_EVENT_job_cancelled) {
+        gameplay.job_cancelled = true;
+        gameplay.job_cancelled_penalty = get_s64_named_value(
+            info->attributes,
+            SCS_TELEMETRY_GAMEPLAY_EVENT_ATTRIBUTE_cancel_penalty
+        );
+    } else if (event_id == SCS_TELEMETRY_GAMEPLAY_EVENT_job_delivered) {
+        gameplay.job_delivered = true;
+        gameplay.job_delivered_data.revenue = get_s64_named_value(
+            info->attributes,
+            SCS_TELEMETRY_GAMEPLAY_EVENT_ATTRIBUTE_revenue
+        );
+        gameplay.job_delivered_data.earned_xp = get_s32_named_value(
+            info->attributes,
+            SCS_TELEMETRY_GAMEPLAY_EVENT_ATTRIBUTE_earned_xp
+        );
+        gameplay.job_delivered_data.cargo_damage = get_float_named_value(
+            info->attributes,
+            SCS_TELEMETRY_GAMEPLAY_EVENT_ATTRIBUTE_cargo_damage
+        );
+        gameplay.job_delivered_data.distance_km = get_float_named_value(
+            info->attributes,
+            SCS_TELEMETRY_GAMEPLAY_EVENT_ATTRIBUTE_distance_km
+        );
+        gameplay.job_delivered_data.delivery_time = get_u32_named_value(
+            info->attributes,
+            SCS_TELEMETRY_GAMEPLAY_EVENT_ATTRIBUTE_delivery_time
+        );
+        gameplay.job_delivered_data.auto_parked = get_bool_named_value(
+            info->attributes,
+            SCS_TELEMETRY_GAMEPLAY_EVENT_ATTRIBUTE_auto_park_used
+        );
+        gameplay.job_delivered_data.auto_loaded = get_bool_named_value(
+            info->attributes,
+            SCS_TELEMETRY_GAMEPLAY_EVENT_ATTRIBUTE_auto_load_used
+        );
+    } else if (event_id == SCS_TELEMETRY_GAMEPLAY_EVENT_player_fined) {
+        gameplay.fined = true;
+        gameplay.fined_data.pay_amount = get_s64_named_value(
+            info->attributes,
+            SCS_TELEMETRY_GAMEPLAY_EVENT_ATTRIBUTE_fine_amount
+        );
+        gameplay.fined_data.offence = get_string_named_value(
+            info->attributes,
+            SCS_TELEMETRY_GAMEPLAY_EVENT_ATTRIBUTE_fine_offence
+        );
+    } else if (event_id == SCS_TELEMETRY_GAMEPLAY_EVENT_player_tollgate_paid) {
+        gameplay.tollgate = true;
+        gameplay.tollgate_payment = get_s64_named_value(
+            info->attributes,
+            SCS_TELEMETRY_GAMEPLAY_EVENT_ATTRIBUTE_pay_amount
+        );
+    } else if (event_id == SCS_TELEMETRY_GAMEPLAY_EVENT_player_use_ferry) {
+        gameplay.ferry = true;
+        gameplay.ferry_data.pay_amount = get_s64_named_value(
+            info->attributes,
+            SCS_TELEMETRY_GAMEPLAY_EVENT_ATTRIBUTE_pay_amount
+        );
+        gameplay.ferry_data.source_name = get_string_named_value(
+            info->attributes,
+            SCS_TELEMETRY_GAMEPLAY_EVENT_ATTRIBUTE_source_name
+        );
+        gameplay.ferry_data.target_name = get_string_named_value(
+            info->attributes,
+            SCS_TELEMETRY_GAMEPLAY_EVENT_ATTRIBUTE_target_name
+        );
+    } else if (event_id == SCS_TELEMETRY_GAMEPLAY_EVENT_player_use_train) {
+        gameplay.train = true;
+        gameplay.train_data.pay_amount = get_s64_named_value(
+            info->attributes,
+            SCS_TELEMETRY_GAMEPLAY_EVENT_ATTRIBUTE_pay_amount
+        );
+        gameplay.train_data.source_name = get_string_named_value(
+            info->attributes,
+            SCS_TELEMETRY_GAMEPLAY_EVENT_ATTRIBUTE_source_name
+        );
+        gameplay.train_data.target_name = get_string_named_value(
+            info->attributes,
+            SCS_TELEMETRY_GAMEPLAY_EVENT_ATTRIBUTE_target_name
+        );
+    } else {
+        handled = false;
+    }
+
+    if (!handled) return;
+
+    ++gameplay.serial;
+    send_payload(true);
+    clear_gameplay_event_details(gameplay);
 }
 
 SCSAPI_VOID store_float(
@@ -679,6 +940,11 @@ SCSAPI_RESULT scs_telemetry_init(
         version_params->register_for_event(
             SCS_TELEMETRY_EVENT_configuration,
             telemetry_configuration,
+            nullptr
+        ) == SCS_RESULT_ok &&
+        version_params->register_for_event(
+            SCS_TELEMETRY_EVENT_gameplay,
+            telemetry_gameplay_event,
             nullptr
         ) == SCS_RESULT_ok;
 

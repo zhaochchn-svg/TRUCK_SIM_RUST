@@ -398,6 +398,8 @@ impl RoutingEngine {
             } else {
                 Some(edge_id)
             };
+            let previous_source_node = previous_edge_id
+                .map(|prev_edge_id| graph_f32[prev_edge_id * GRAPH_STRIDE] as usize);
 
             if current_node >= self.adjacency.len() {
                 continue;
@@ -405,6 +407,11 @@ impl RoutingEngine {
 
             for &next_edge_idx in &self.adjacency[current_node] {
                 let stride_idx = next_edge_idx * GRAPH_STRIDE;
+                let next_node = graph_f32[stride_idx + 1] as usize;
+                if previous_source_node == Some(next_node) {
+                    continue;
+                }
+
                 let req_dlc = graph_f32[stride_idx + 6] as i32;
                 if req_dlc != 0 && !owned_dlcs.contains(&req_dlc) {
                     continue;
@@ -499,6 +506,60 @@ impl RoutingEngine {
             node_kms.push(total_meters / 1000.0);
             node_hours.push(total_seconds / 3600.0);
             previous_edge_id = Some(*edge_id);
+        }
+
+        for edge_idx in 0..edge_ids.len() {
+            let seq_idx = edge_idx + 1;
+            if sequence_maneuvers[seq_idx] != 3 {
+                continue;
+            }
+
+            let exit_number = sequence_exits[seq_idx];
+            if exit_number == -3 {
+                let mut skipped_exits = 0i8;
+
+                for scan_edge_idx in (edge_idx + 1)..edge_ids.len() {
+                    let scan_edge_id = edge_ids[scan_edge_idx];
+                    let scan_stride_idx = scan_edge_id * GRAPH_STRIDE;
+                    let scan_maneuver = graph_f32[scan_stride_idx + 10] as i8;
+                    let scan_exit = graph_f32[scan_stride_idx + 11] as i8;
+
+                    if scan_maneuver != 3 {
+                        break;
+                    }
+
+                    if scan_exit == -2 {
+                        sequence_exits[seq_idx] = skipped_exits + 1;
+                        break;
+                    } else if scan_exit == -1 {
+                        let scan_source = graph_f32[scan_stride_idx] as usize;
+                        let scan_target = graph_f32[scan_stride_idx + 1] as usize;
+                        if scan_source < self.adjacency.len() {
+                            for &neighbor_edge_id in &self.adjacency[scan_source] {
+                                let neighbor_stride_idx = neighbor_edge_id * GRAPH_STRIDE;
+                                let neighbor_maneuver = graph_f32[neighbor_stride_idx + 10] as i8;
+                                let neighbor_exit = graph_f32[neighbor_stride_idx + 11] as i8;
+                                let neighbor_target = graph_f32[neighbor_stride_idx + 1] as usize;
+                                if neighbor_maneuver == 3
+                                    && neighbor_exit == -2
+                                    && neighbor_target != scan_target
+                                {
+                                    skipped_exits += 1;
+                                }
+                            }
+                        }
+                    } else {
+                        break;
+                    }
+                }
+
+                if sequence_exits[seq_idx] == -3 {
+                    sequence_exits[seq_idx] = 1;
+                }
+            } else if exit_number == -1 || exit_number == -2 {
+                sequence_maneuvers[seq_idx] = 0;
+                sequence_exits[seq_idx] = 0;
+            }
         }
 
         Some(RouteResult {

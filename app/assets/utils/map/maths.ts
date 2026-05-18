@@ -1,4 +1,4 @@
-export const DEVIATION_THRESHOLD_SQ = 0.000002;
+export const DEVIATION_THRESHOLD_SQ = 0.000004;
 
 export function toRad(deg: number) {
     return (deg * Math.PI) / 180;

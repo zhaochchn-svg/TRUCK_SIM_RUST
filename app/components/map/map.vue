@@ -73,6 +73,7 @@ const {
     scale,
     averageSpeed,
     destinationCompany,
+    telemetryEventNotifications,
 } = useEtsTelemetry();
 
 // 城市与位置数据加载器
@@ -570,6 +571,8 @@ const toggleSettingsPanel = () => {
                         :rest-stop-time="restStoptime"
                         :is-web="isWeb"
                     />
+
+                    <TelemetryEventTicker :items="telemetryEventNotifications" />
 
                     <!-- 左侧控制按钮 -->
                     <div class="left-buttons">

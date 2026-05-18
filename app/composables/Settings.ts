@@ -60,7 +60,7 @@ const DEFAULT_PROFILE: GameProfile = {
     voiceMode: "standard",
     voicePersona: "standard",
     mapTheme: "dark",
-    maneuverDistance: 1.5,
+    maneuverDistance: 5,
     fontFamily: "Quicksand",
 };
 
@@ -174,10 +174,18 @@ export const useSettings = () => {
                 // Ensure each profile has all required fields from DEFAULT_PROFILE
                 for (const game of ['ets2', 'ats'] as const) {
                     if (mergedSettings.profiles[game]) {
+                        const savedManeuverDistance =
+                            mergedSettings.profiles[game].maneuverDistance;
                         mergedSettings.profiles[game] = {
                             ...DEFAULT_SETTINGS.profiles[game],
                             ...mergedSettings.profiles[game]
                         };
+                        if (
+                            savedManeuverDistance === undefined ||
+                            savedManeuverDistance < 5
+                        ) {
+                            mergedSettings.profiles[game].maneuverDistance = 5;
+                        }
                     }
                 }
 

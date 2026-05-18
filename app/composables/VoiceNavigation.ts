@@ -1,7 +1,7 @@
 import { ref, watch } from 'vue';
 
 type VoiceState = "idle" | "speaking";
-type AnnouncementThreshold = "2km" | "500m" | "action";
+type AnnouncementThreshold = "5km" | "500m" | "action";
 type VoicePriority = 0 | 1 | 2 | 3;
 
 interface SpeakOptions {
@@ -303,7 +303,7 @@ export function useVoiceNavigation() {
         const safeSpeedKph = Number.isFinite(speedKph) && speedKph > 5 ? speedKph : 80;
         const actionThresholdKm = clamp((safeSpeedKph * 4) / 3600, 0.045, 0.16);
         const closeThresholdKm = 0.5;
-        const farThresholdKm = 2.0;
+        const farThresholdKm = 5.0;
 
         // If we moved to a new maneuver, reset the threshold state
         if (lastAnnouncedManeuverId.value !== maneuverId) {
@@ -335,15 +335,15 @@ export function useVoiceNavigation() {
                 lastAnnouncedThreshold.value = "500m";
             }
         }
-        else if (distanceToTurnKm <= farThresholdKm && distanceToTurnKm > closeThresholdKm && lastAnnouncedThreshold.value !== "2km" && lastAnnouncedThreshold.value !== "500m" && lastAnnouncedThreshold.value !== "action") {
+        else if (distanceToTurnKm <= farThresholdKm && distanceToTurnKm > closeThresholdKm && lastAnnouncedThreshold.value !== "5km" && lastAnnouncedThreshold.value !== "500m" && lastAnnouncedThreshold.value !== "action") {
             if (mode === "standard") {
-                speak(transformInstruction(`2公里后${instructionText}`, "prep"), {
+                speak(transformInstruction(`5公里后${instructionText}`, "prep"), {
                     priority: 1,
-                    dedupeKey: `maneuver:${maneuverId}:2km`,
+                    dedupeKey: `maneuver:${maneuverId}:5km`,
                     dedupeWindowMs: 15000,
                     queueGroup: `maneuver:${maneuverId}`,
                 });
-                lastAnnouncedThreshold.value = "2km";
+                lastAnnouncedThreshold.value = "5km";
             }
         }
     };
